@@ -11,7 +11,7 @@ export const memoryTools: ToolSet = {
     memory_store_multiple: tool({
         description: 'Store multiple distinct pieces of information in a memory store.',
         inputSchema: memoryStoreMultipleSchema,
-        execute: async (memoryList)=> memoryStoreMultipleFunction(memoryList)
+        execute: async ({memoryList})=> memoryStoreMultipleFunction(memoryList)
     }),
     memory_retrieve: tool({
         description: 'Search for relevant memories using semantic similarity. Provide a natural language query describing what you want to find.',

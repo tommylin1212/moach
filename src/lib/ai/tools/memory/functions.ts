@@ -1,10 +1,11 @@
 import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema } from './schemas';
 import { z } from 'zod';
-import { turso } from '@/lib/database/connection';
+import { db, turso } from '@/lib/database/connection';
+import { memory } from '@/lib/database/schema';
 import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
-const db = turso;
+import { eq, and, sql } from 'drizzle-orm';
 const generateEmbedding = async (text: string): Promise<number[]> => {
     console.log('Generating embedding for:', text);
     const { embedding } = await embed({
@@ -30,16 +31,23 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
         console.log('Storing single memory');
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
-        await db.execute(
-            `INSERT INTO memory (key, value, tags, user_id, embedding) 
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(key, user_id) 
-             DO UPDATE SET 
-               value = excluded.value,
-               tags = excluded.tags,
-               embedding = excluded.embedding`,
-            [key, value, JSON.stringify(tags), user_id, JSON.stringify(embedding)]
-        );
+        
+        await db.insert(memory)
+            .values({
+                key,
+                value,
+                tags: JSON.stringify(tags),
+                userId: user_id,
+                embedding,
+            })
+            .onConflictDoUpdate({
+                target: [memory.key, memory.userId],
+                set: {
+                    value: sql`excluded.value`,
+                    tags: sql`excluded.tags`,
+                    embedding: sql`excluded.embedding`,
+                },
+            });
     } catch (error: any) {
         console.error('Error storing memory:', error);
         return { success: false, error: error.message };
@@ -47,7 +55,7 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
     return { success: true, message: 'Memory stored successfully' };
 }
 
-export const memoryStoreMultipleFunction = async (memoryList: { memoryList: { key: string, value: string, tags: string[] }[] }) => {
+export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]) => {
     console.log('Storing multiple memories',JSON.stringify(memoryList,null,2));
     const { success, error } = memoryStoreMultipleSchema.safeParse({ memoryList });
     if (!success) {
@@ -56,34 +64,34 @@ export const memoryStoreMultipleFunction = async (memoryList: { memoryList: { ke
     }
     try {
         const user_id = await getUser();
-        console.log('Storing multiple memories:', memoryList.memoryList.length, 'entries');
+        console.log('Storing multiple memories:', memoryList.length, 'entries');
 
         // Process each memory entry and generate embeddings
         const memoryEntries = await Promise.all(
-            memoryList.memoryList.map(async (memory) => {
-                const embedding = await generateEmbedding(memory.value);
+            memoryList.map(async (memoryItem) => {
+                const embedding = await generateEmbedding(memoryItem.value);
                 return {
-                    key: memory.key,
-                    value: memory.value,
-                    tags: JSON.stringify(memory.tags),
-                    user_id: user_id,
-                    embedding: JSON.stringify(embedding)
+                    key: memoryItem.key,
+                    value: memoryItem.value,
+                    tags: JSON.stringify(memoryItem.tags),
+                    userId: user_id,
+                    embedding
                 };
             })
         );
 
-        // Batch upsert all memories (insert or update if key+user_id combination exists)
+        // Batch upsert all memories using Drizzle
         for (const entry of memoryEntries) {
-            await db.execute(
-                `INSERT INTO memory (key, value, tags, user_id, embedding) 
-                 VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT(key, user_id) 
-                 DO UPDATE SET 
-                   value = excluded.value,
-                   tags = excluded.tags,
-                   embedding = excluded.embedding`,
-                [entry.key, entry.value, entry.tags, entry.user_id, entry.embedding]
-            );
+            await db.insert(memory)
+                .values(entry)
+                .onConflictDoUpdate({
+                    target: [memory.key, memory.userId],
+                    set: {
+                        value: sql`excluded.value`,
+                        tags: sql`excluded.tags`,
+                        embedding: sql`excluded.embedding`,
+                    },
+                });
         }
 
         console.log(`Successfully stored ${memoryEntries.length} memories`);
@@ -109,8 +117,8 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
         // Generate embedding for the query
         const queryEmbedding = await generateEmbedding(embeddingQuery);
 
-        // Use vector similarity search to find the most relevant memories
-        const result = await db.execute(`
+        // Use vector similarity search - need raw SQL for vector operations
+        const result = await turso.execute(`
             SELECT id, key, value, tags, created_at,
                    vector_distance_cos(embedding, ?) as similarity
             FROM memory 
@@ -122,8 +130,8 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
         return result.rows.length > 0 ? result.rows : null;
     } catch (error) {
         console.error('Error retrieving memory:', error);
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    return { success: true, message: 'Memory retrieved successfully' };
 }
 
 export const memoryUpdateFunction = async (key: string, value: string, tags: string[]) => {
@@ -134,18 +142,24 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
     }
     try {
         const user_id = await getUser();
-
         const embedding = await generateEmbedding(value);
-        await db.execute(
-            `INSERT INTO memory (key, value, tags, user_id, embedding) 
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(key, user_id) 
-             DO UPDATE SET 
-               value = excluded.value,
-               tags = excluded.tags,
-               embedding = excluded.embedding`,
-            [key, value, JSON.stringify(tags), user_id, JSON.stringify(embedding)]
-        );
+        
+        await db.insert(memory)
+            .values({
+                key,
+                value,
+                tags: JSON.stringify(tags),
+                userId: user_id,
+                embedding,
+            })
+            .onConflictDoUpdate({
+                target: [memory.key, memory.userId],
+                set: {
+                    value: sql`excluded.value`,
+                    tags: sql`excluded.tags`,
+                    embedding: sql`excluded.embedding`,
+                },
+            });
     } catch (error) {
         console.error('Error updating memory:', error);
         return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -162,13 +176,12 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
     try {
         console.log('Semantic search for:', embeddingQuery);
         const user_id = await getUser();
-        const db = turso;
 
         // Generate embedding for the search query
         const queryEmbedding = await generateEmbedding(embeddingQuery);
 
-        // Perform semantic search with configurable limit
-        const result = await db.execute(`
+        // Perform semantic search with configurable limit - need raw SQL for vector operations
+        const result = await turso.execute(`
             SELECT id, key, value, tags, created_at,
                    vector_distance_cos(embedding, ?) as similarity_score
             FROM memory 
@@ -176,6 +189,7 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
             ORDER BY similarity_score ASC
             LIMIT ?
         `, [JSON.stringify(queryEmbedding), user_id, limit]);
+        
         // Return formatted results with similarity scores
         const results = result.rows.map(row => ({
             id: row.id,
