@@ -35,6 +35,7 @@ import {
   ReasoningTrigger,
 } from '@/components/ai-elements/reasoning';
 import { Loader } from '@/components/ai-elements/loader';
+import { MemoryDisplay, type MemoryItem } from '@/components/ai-elements/memory';
 
 const models = [
   {
@@ -53,6 +54,77 @@ const ChatBotDemo = () => {
   const [webSearch, setWebSearch] = useState(false);
   const [memory, setMemory] = useState(true);
   const { messages, sendMessage, status } = useChat();
+
+  // Helper function to extract memory operations from message parts
+  const extractMemoryFromMessage = (message: any): MemoryItem[] => {
+    if (!message.parts) return [];
+    
+    const memoryItems: MemoryItem[] = [];
+    
+    message.parts.forEach((part: any) => {
+      // Check for memory tool calls
+      if (part.type?.startsWith('tool-memory_')) {
+        const toolName = part.type.replace('tool-', '');
+        const operation = toolName.replace('memory_', '').replace('_semantic', '').replace('_by_tags', '').replace('_by_key', '');
+        
+        // Extract input and output data
+        if (part.state === 'output-available' && part.input && part.output) {
+          try {
+            if (operation === 'store' || operation === 'store_multiple') {
+              // Handle store operations
+              if (part.input.memoryList) {
+                // Multiple store operation
+                part.input.memoryList.forEach((item: any) => {
+                  memoryItems.push({
+                    key: item.key,
+                    value: item.value,
+                    tags: item.tags || [],
+                    operation: 'store'
+                  });
+                });
+              } else if (part.input.key && part.input.value) {
+                // Single store operation
+                memoryItems.push({
+                  key: part.input.key,
+                  value: part.input.value,
+                  tags: part.input.tags || [],
+                  operation: 'store'
+                });
+              }
+            } else if (operation === 'retrieve' || operation === 'search') {
+              // Handle retrieve/search operations
+              const results = part.output?.results || part.output;
+              if (Array.isArray(results)) {
+                results.forEach((result: any) => {
+                  memoryItems.push({
+                    id: result.id,
+                    key: result.key,
+                    value: result.value,
+                    tags: typeof result.tags === 'string' ? JSON.parse(result.tags) : result.tags || [],
+                    created_at: result.created_at,
+                    similarity: result.similarity,
+                    operation: 'retrieve'
+                  });
+                });
+              }
+            } else if (operation === 'update') {
+              // Handle update operations
+              memoryItems.push({
+                key: part.input.key,
+                value: part.input.value,
+                tags: part.input.tags || [],
+                operation: 'update'
+              });
+            }
+          } catch (error) {
+            console.error('Error parsing memory data:', error);
+          }
+        }
+      }
+    });
+    
+    return memoryItems;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,59 +147,69 @@ const ChatBotDemo = () => {
       <div className="flex flex-col h-full">
         <Conversation className="h-full">
           <ConversationContent>
-            {messages.map((message) => (
-              <div key={message.id}>
-                {message.role === 'assistant' && (() => {
-                  const sourceUrls = message.parts.filter(part => part.type === 'source-url');
-                  const uniqueSourceUrls = sourceUrls.filter((part, index, self) => 
-                    index === self.findIndex(p => p.url === part.url)
-                  );
-                  return uniqueSourceUrls.length > 0 ? (
-                    <Sources>
-                      <SourcesTrigger count={uniqueSourceUrls.length} />
-                      <SourcesContent>
-                        {uniqueSourceUrls.map((part, i) => (
-                          <Source
-                            key={`${message.id}-${i}`}
-                            href={part.url}
-                            title={part.url}
-                          />
-                        ))}
-                      </SourcesContent>
-                    </Sources>
-                  ) : null;
-                })()}
-                <Message from={message.role} key={message.id}>
-                  <MessageContent>
-                    {message.parts.map((part, i) => {
-                      message.parts.forEach(part => {
-                      })
-                      switch (part.type) {
-                        case 'text':
-                          return (
-                            <Response key={`${message.id}-${i}`}>
-                              {part.text}
-                            </Response>
-                          );
-                        case 'reasoning':
-                          return (
-                            <Reasoning
+            {messages.map((message) => {
+              const memoryItems = extractMemoryFromMessage(message);
+              
+              return (
+                <div key={message.id}>
+                  {message.role === 'assistant' && (() => {
+                    const sourceUrls = message.parts.filter(part => part.type === 'source-url');
+                    const uniqueSourceUrls = sourceUrls.filter((part, index, self) => 
+                      index === self.findIndex(p => p.url === part.url)
+                    );
+                    return uniqueSourceUrls.length > 0 ? (
+                      <Sources>
+                        <SourcesTrigger count={uniqueSourceUrls.length} />
+                        <SourcesContent>
+                          {uniqueSourceUrls.map((part, i) => (
+                            <Source
                               key={`${message.id}-${i}`}
-                              className="w-full"
-                              isStreaming={status === 'streaming'}
-                            >
-                              <ReasoningTrigger />
-                              <ReasoningContent>{part.text}</ReasoningContent>
-                            </Reasoning>
-                          );
-                        default:
-                          return null;
-                      }
-                    })}
-                  </MessageContent>
-                </Message>
-              </div>
-            ))}
+                              href={part.url}
+                              title={part.url}
+                            />
+                          ))}
+                        </SourcesContent>
+                      </Sources>
+                    ) : null;
+                  })()}
+                  
+                  {/* Memory Display - Show before the message for assistant messages with memory operations */}
+                  {memoryItems.length > 0 && (
+                    <div className="mb-3 p-2 rounded-lg bg-gradient-to-r from-purple-50/50 via-transparent to-blue-50/50 dark:from-purple-950/20 dark:via-transparent dark:to-blue-950/20 border border-purple-100/50 dark:border-purple-900/30">
+                      <MemoryDisplay memories={memoryItems} />
+                    </div>
+                  )}
+                  
+                  <Message from={message.role} key={message.id}>
+                    <MessageContent>
+                      {message.parts.map((part, i) => {
+                        switch (part.type) {
+                          case 'text':
+                            return (
+                              <Response key={`${message.id}-${i}`}>
+                                {part.text}
+                              </Response>
+                            );
+                          case 'reasoning':
+                            return (
+                              <Reasoning
+                                key={`${message.id}-${i}`}
+                                className="w-full"
+                                isStreaming={status === 'streaming'}
+                              >
+                                <ReasoningTrigger />
+                                <ReasoningContent>{part.text}</ReasoningContent>
+                              </Reasoning>
+                            );
+                          default:
+                            return null;
+                        }
+                      })}
+                    </MessageContent>
+                  </Message>
+                </div>
+              );
+            })}
             {status === 'submitted' && <Loader />}
           </ConversationContent>
           <ConversationScrollButton />
