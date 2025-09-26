@@ -1,4 +1,4 @@
-import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema } from './schemas';
+import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema, memorySearchByTagsSchema, memorySearchByKeySchema } from './schemas';
 import { z } from 'zod';
 import { db, turso } from '@/lib/database/connection';
 import { memory } from '@/lib/database/schema';
@@ -28,7 +28,6 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
         return { success: false, error: error.message };
     }
     try {
-        console.log('Storing single memory');
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
         
@@ -64,7 +63,6 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
     }
     try {
         const user_id = await getUser();
-        console.log('Storing multiple memories:', memoryList.length, 'entries');
 
         // Process each memory entry and generate embeddings
         const memoryEntries = await Promise.all(
@@ -93,8 +91,6 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
                     },
                 });
         }
-
-        console.log(`Successfully stored ${memoryEntries.length} memories`);
         return { success: true, count: memoryEntries.length, message: 'Memories stored successfully' };
 
     } catch (error) {
@@ -111,7 +107,6 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
         return { success: false, error: error.message };
     }
     try {
-        console.log('Retrieving memory for query:', embeddingQuery);
         const user_id = await getUser();
 
         // Generate embedding for the query
@@ -174,7 +169,6 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
         return { success: false, error: error.message };
     }
     try {
-        console.log('Semantic search for:', embeddingQuery);
         const user_id = await getUser();
 
         // Generate embedding for the search query
@@ -202,6 +196,106 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
         return { success: true, results: results, message: 'Memory semantic search successfully' };
     } catch (error) {
         console.error('Error semantic searching memory:', error);
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10) => {
+    console.log('Searching memories by tags:', tags);
+    const { success, error } = memorySearchByTagsSchema.safeParse({ tags, limit });
+    if (!success) {
+        return { success: false, error: error.message };
+    }
+    try {
+        const user_id = await getUser();
+
+        // Create placeholders for tags - we'll use JSON_EXTRACT or LIKE for tag matching
+        const tagConditions = tags.map(() => 'tags LIKE ?').join(' OR ');
+        const tagValues = tags.map(tag => `%"${tag}"%`);
+
+        const result = await turso.execute(`
+            SELECT id, key, value, tags, created_at
+            FROM memory 
+            WHERE user_id = ? AND (${tagConditions})
+            ORDER BY created_at DESC
+            LIMIT ?
+        `, [user_id, ...tagValues, limit]);
+
+        // Format results
+        const results = result.rows.map(row => ({
+            id: row.id,
+            key: row.key,
+            value: row.value,
+            tags: JSON.parse(row.tags as string),
+            created_at: row.created_at
+        }));
+
+        return { 
+            success: true, 
+            results: results, 
+            count: results.length,
+            message: `Found ${results.length} memories with tags: ${tags.join(', ')}` 
+        };
+    } catch (error) {
+        console.error('Error searching memories by tags:', error);
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10) => {
+    console.log('Searching memories by key pattern:', keyPattern, 'exactMatch:', exactMatch);
+    const { success, error } = memorySearchByKeySchema.safeParse({ keyPattern, exactMatch, limit });
+    if (!success) {
+        return { success: false, error: error.message };
+    }
+    try {
+        const user_id = await getUser();
+
+        let query: string;
+        let queryValues: any[];
+
+        if (exactMatch) {
+            // Exact key match
+            query = `
+                SELECT id, key, value, tags, created_at
+                FROM memory 
+                WHERE user_id = ? AND key = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            `;
+            queryValues = [user_id, keyPattern, limit];
+        } else {
+            // Partial key match using LIKE
+            query = `
+                SELECT id, key, value, tags, created_at
+                FROM memory 
+                WHERE user_id = ? AND key LIKE ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            `;
+            queryValues = [user_id, `%${keyPattern}%`, limit];
+        }
+
+        const result = await turso.execute(query, queryValues);
+
+        // Format results
+        const results = result.rows.map(row => ({
+            id: row.id,
+            key: row.key,
+            value: row.value,
+            tags: JSON.parse(row.tags as string),
+            created_at: row.created_at
+        }));
+
+        const matchType = exactMatch ? 'exact' : 'partial';
+        return { 
+            success: true, 
+            results: results, 
+            count: results.length,
+            message: `Found ${results.length} memories with ${matchType} key match: "${keyPattern}"` 
+        };
+    } catch (error) {
+        console.error('Error searching memories by key:', error);
         return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
 }

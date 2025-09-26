@@ -1,14 +1,5 @@
-import mem0 from '@/lib/mem0/create-client';
 import { streamText, UIMessage, convertToModelMessages, tool, stepCountIs, embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
-import { z } from 'zod';
-// Import fs at the top of your file: import * as fs from 'fs';
-import * as fs from 'fs';
-import * as path from 'path';
-import { createClient } from '@libsql/client';
-import { turso } from '@/lib/database/connection';
-import { memoryRetrieveSchema, memorySemanticSearchSchema, memoryStoreMultipleSchema, memoryStoreSchema, memoryUpdateSchema } from '@/lib/ai/tools/memory/schemas';
-import { memoryRetrieveFunction, memorySemanticSearchFunction, memoryStoreFunction, memoryStoreMultipleFunction, memoryUpdateFunction } from '@/lib/ai/tools/memory/functions';
 import { memoryTools } from '@/lib/ai/tools/memory/tools';
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 50;
@@ -35,7 +26,7 @@ export async function POST(req: Request) {
       }: { messages: UIMessage[]; model: string; webSearch: boolean; memory: boolean } =
         await req.json();
 
-    const result = await (model === 'mem0' ? memConversation(messages, onFinishRoutine) : openaiConversation(messages, webSearch, memory, onFinishRoutine));
+    const result = await openaiConversation(messages, webSearch, memory);
     
     return result.toUIMessageStreamResponse(
         {
@@ -45,25 +36,7 @@ export async function POST(req: Request) {
     );
 }
 
-
-const memConversation = async (messages: UIMessage[], onFinish: (result: any) => Promise<void> | void | undefined) => {
-    const result = streamText({
-        system: systemPrompt,
-        model: mem0('gpt-4o', { user_id: 'test_user' }),
-        tools:{web_search_preview: openai.tools.webSearchPreview({
-            searchContextSize: 'high',
-            userLocation: {
-                type: 'approximate',
-                country: 'US',
-            },
-        })},
-        messages: convertToModelMessages(messages),
-        onFinish: onFinish,
-    });
-    return result;
-}
-
-const openaiConversation = async (messages: UIMessage[], webSearch: boolean, memory: boolean, onFinish: (result: any) => Promise<void> | void | undefined) => {
+const openaiConversation = async (messages: UIMessage[], webSearch: boolean, memory: boolean) => {
     const result = streamText({
         system: systemPrompt,
         model: openai('gpt-5'),
@@ -79,15 +52,11 @@ const openaiConversation = async (messages: UIMessage[], webSearch: boolean, mem
                     })} : {}),
                 ...(memory ? memoryTools : {}),
             },
-        onFinish: onFinish,
+        //onFinish: onFinish,
         stopWhen: stepCountIs(15),
     });
     return result;
 }
 
-const onFinishRoutine = async (result: any) => {
-    console.log('On finish routine',JSON.stringify(result.messages,null,2));
-    console.log('On finish routine',JSON.stringify(result.steps,null,2));
-}
 
 

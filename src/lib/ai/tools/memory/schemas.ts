@@ -24,3 +24,14 @@ export const memorySemanticSearchSchema = z.object({
     embeddingQuery: z.string().describe('The query to search the memory store with, this is the query to search the memory store with'),
     limit: z.number().optional().describe('The limit to search the memory store with, this is the limit of the number of results to return'),
 });
+
+export const memorySearchByTagsSchema = z.object({
+    tags: z.array(z.string()).describe('Array of tags to search for. Returns memories that contain ANY of these tags (OR logic)'),
+    limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+});
+
+export const memorySearchByKeySchema = z.object({
+    keyPattern: z.string().describe('Key pattern to search for. Supports exact match or partial matching with wildcards'),
+    exactMatch: z.boolean().optional().describe('Whether to perform exact key matching (default: false for partial matching)'),
+    limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+});
