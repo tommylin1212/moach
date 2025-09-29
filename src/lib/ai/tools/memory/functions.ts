@@ -6,6 +6,7 @@ import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
 import { eq, and, sql } from 'drizzle-orm';
+
 const generateEmbedding = async (text: string): Promise<number[]> => {
     console.log('Generating embedding for:', text);
     const { embedding } = await embed({
@@ -21,7 +22,7 @@ const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 export const memoryStoreFunction = async (key: string, value: string, tags: string[]) => {
-    console.log('Storing single memory',JSON.stringify({ key, value, tags },null,2));
+    console.log('Storing single memory', JSON.stringify({ key, value, tags }, null, 2));
     const { success, error } = memoryStoreSchema.safeParse({ key, value, tags });
     if (!success) {
         console.error('Error storing memory:', error);
@@ -30,7 +31,7 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
     try {
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
-        
+
         await db.insert(memory)
             .values({
                 key,
@@ -47,15 +48,19 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
                     embedding: sql`excluded.embedding`,
                 },
             });
-    } catch (error: any) {
+    } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error storing memory:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error storing memory:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: String(error) };
     }
     return { success: true, message: 'Memory stored successfully' };
-}
+};
 
 export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]) => {
-    console.log('Storing multiple memories',JSON.stringify(memoryList,null,2));
+    console.log('Storing multiple memories', JSON.stringify(memoryList, null, 2));
     const { success, error } = memoryStoreMultipleSchema.safeParse({ memoryList });
     if (!success) {
         console.error('Error storing multiple memories:', error);
@@ -94,10 +99,14 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
         return { success: true, count: memoryEntries.length, message: 'Memories stored successfully' };
 
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error storing multiple memories:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error storing multiple memories:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
-}
+};
 
 export const memoryRetrieveFunction = async (embeddingQuery: string) => {
     console.log('Retrieving memory for query:', embeddingQuery);
@@ -124,10 +133,14 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
 
         return result.rows.length > 0 ? result.rows : null;
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error retrieving memory:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error retrieving memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
-}
+};
 
 export const memoryUpdateFunction = async (key: string, value: string, tags: string[]) => {
     console.log('Updating memory for key:', key);
@@ -138,7 +151,7 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
     try {
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
-        
+
         await db.insert(memory)
             .values({
                 key,
@@ -156,11 +169,15 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
                 },
             });
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error updating memory:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error updating memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
     return { success: true, message: 'Memory updated successfully' };
-}
+};
 
 export const memorySemanticSearchFunction = async (embeddingQuery: string, limit: number = 5) => {
     console.log('Semantic search for:', embeddingQuery);
@@ -183,22 +200,33 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
             ORDER BY similarity_score ASC
             LIMIT ?
         `, [JSON.stringify(queryEmbedding), user_id, limit]);
-        
+
         // Return formatted results with similarity scores
-        const results = result.rows.map(row => ({
+        const results = result.rows.map((row: {
+            id: string;
+            key: string;
+            value: string;
+            tags: string;
+            created_at: string;
+            similarity_score: number;
+        }) => ({
             id: row.id,
             key: row.key,
             value: row.value,
-            tags: JSON.parse(row.tags as string),
+            tags: JSON.parse(row.tags),
             created_at: row.created_at,
             similarity_score: row.similarity_score
         }));
         return { success: true, results: results, message: 'Memory semantic search successfully' };
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error semantic searching memory:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error semantic searching memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
-}
+};
 
 export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10) => {
     console.log('Searching memories by tags:', tags);
@@ -222,25 +250,35 @@ export const memorySearchByTagsFunction = async (tags: string[], limit: number =
         `, [user_id, ...tagValues, limit]);
 
         // Format results
-        const results = result.rows.map(row => ({
+        const results = result.rows.map((row: {
+            id: string;
+            key: string;
+            value: string;
+            tags: string;
+            created_at: string;
+        }) => ({
             id: row.id,
             key: row.key,
             value: row.value,
-            tags: JSON.parse(row.tags as string),
+            tags: JSON.parse(row.tags),
             created_at: row.created_at
         }));
 
-        return { 
-            success: true, 
-            results: results, 
+        return {
+            success: true,
+            results: results,
             count: results.length,
-            message: `Found ${results.length} memories with tags: ${tags.join(', ')}` 
+            message: `Found ${results.length} memories with tags: ${tags.join(', ')}`
         };
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error searching memories by tags:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error searching memories by tags:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
-}
+};
 
 export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10) => {
     console.log('Searching memories by key pattern:', keyPattern, 'exactMatch:', exactMatch);
@@ -252,7 +290,7 @@ export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: 
         const user_id = await getUser();
 
         let query: string;
-        let queryValues: any[];
+        let queryValues: (string | number)[];
 
         if (exactMatch) {
             // Exact key match
@@ -279,23 +317,33 @@ export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: 
         const result = await turso.execute(query, queryValues);
 
         // Format results
-        const results = result.rows.map(row => ({
+        const results = result.rows.map((row: {
+            id: string;
+            key: string;
+            value: string;
+            tags: string;
+            created_at: string;
+        }) => ({
             id: row.id,
             key: row.key,
             value: row.value,
-            tags: JSON.parse(row.tags as string),
+            tags: JSON.parse(row.tags),
             created_at: row.created_at
         }));
 
         const matchType = exactMatch ? 'exact' : 'partial';
-        return { 
-            success: true, 
-            results: results, 
+        return {
+            success: true,
+            results: results,
             count: results.length,
-            message: `Found ${results.length} memories with ${matchType} key match: "${keyPattern}"` 
+            message: `Found ${results.length} memories with ${matchType} key match: "${keyPattern}"`
         };
     } catch (error) {
+        if (error instanceof Error) {
+            console.error('Error searching memories by key:', error);
+            return { success: false, error: error.message };
+        }
         console.error('Error searching memories by key:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return { success: false, error: String(error) };
     }
-}
+};
