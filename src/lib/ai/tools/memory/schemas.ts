@@ -5,33 +5,40 @@ export const memoryStoreSchema = z.object({
     value: z.string().describe('The value to store in the memory store, this is the main content of the memory, this should be concise but detailed'),
     tags: z.array(z.string()).describe('The tags to store in the memory store, this is a list of tags that can be used to search the memory store'),
 });
+export type MemoryStore = z.infer<typeof memoryStoreSchema>;
 
 export const memoryStoreMultipleSchema = z.object({
     memoryList: z.array(memoryStoreSchema).describe('The list of memories to store in the memory store, needs to be an array of objects.'),
 });
+export type MemoryStoreMultiple = z.infer<typeof memoryStoreMultipleSchema>;
 
 export const memoryRetrieveSchema = z.object({
     embeddingQuery: z.string().describe('The query to search the memory store embeddings with, the value column gets turned into an embedding and stored in the embedding column')
 });
+export type MemoryRetrieve = z.infer<typeof memoryRetrieveSchema>;
 
 export const memoryUpdateSchema = z.object({
     key: z.string().describe('The key to update the memory under, this is the main identifier of the memory'),
     value: z.string().describe('The value to update in the memory store, this is the main content of the memory, this should be concise but detailed'),
     tags: z.array(z.string()).describe('The tags to update in the memory store, this is a list of tags that can be used to search the memory store'),
 });
+export type MemoryUpdate = z.infer<typeof memoryUpdateSchema>;
 
 export const memorySemanticSearchSchema = z.object({
     embeddingQuery: z.string().describe('The query to search the memory store with, this is the query to search the memory store with'),
     limit: z.number().optional().describe('The limit to search the memory store with, this is the limit of the number of results to return'),
 });
+export type MemorySemanticSearch = z.infer<typeof memorySemanticSearchSchema>;
 
 export const memorySearchByTagsSchema = z.object({
     tags: z.array(z.string()).describe('Array of tags to search for. Returns memories that contain ANY of these tags (OR logic)'),
     limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
 });
+export type MemorySearchByTags = z.infer<typeof memorySearchByTagsSchema>;
 
 export const memorySearchByKeySchema = z.object({
     keyPattern: z.string().describe('Key pattern to search for. Supports exact match or partial matching with wildcards'),
     exactMatch: z.boolean().optional().describe('Whether to perform exact key matching (default: false for partial matching)'),
     limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
 });
+export type MemorySearchByKey = z.infer<typeof memorySearchByKeySchema>;

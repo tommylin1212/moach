@@ -10,8 +10,8 @@ import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import * as dotenv from "dotenv";
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from .env.local (Next.js convention)
+dotenv.config({ path: '.env.local' });
 
 async function runMigration() {
   if (!process.env.TURSO_DATABASE_URL) {

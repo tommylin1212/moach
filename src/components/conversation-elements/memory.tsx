@@ -7,6 +7,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { UIMessage, UIDataTypes, UIMessagePart, UITools, ToolUIPart } from "ai"
+import z from "zod"
+import { memoryStoreMultipleSchema, memoryStoreSchema, memoryUpdateSchema } from "@/lib/ai/tools/memory/schemas"
+import { Memory } from "@/lib/database/schema"
 
 export interface MemoryItem {
   id?: string | number
@@ -19,13 +23,96 @@ export interface MemoryItem {
 }
 
 export interface MemoryDisplayProps {
-  memories: MemoryItem[]
+  message: UIMessage
   className?: string
 }
 
-export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
+
+type AnyUIMessagePart = UIMessagePart<UIDataTypes, UITools>;
+// Helper function to extract memory operations from message parts
+export function extractMemoryFromMessage(message: UIMessage): MemoryItem[] {
+  if (!message.parts) return [];
+
+  const memoryItems: MemoryItem[] = [];
+
+  message.parts.forEach((part: AnyUIMessagePart) => {
+    // Check for memory tool calls
+    if (part.type?.startsWith('tool-memory_')) {
+      const toolPart = part as ToolUIPart;
+      const toolName = part.type.replace('tool-', '');
+      const operation = toolName.replace('memory_', '').replace('_semantic', '').replace('_by_tags', '').replace('_by_key', '');
+
+      // Extract input and output data
+      if (toolPart.state === 'output-available' && toolPart.input && toolPart.output) {
+        try {
+          if (operation === 'store_multiple') {
+            const toolInput = z.safeParse(memoryStoreMultipleSchema, toolPart.input);
+            if (toolInput.success) {
+              // Multiple store operation
+              toolInput.data.memoryList.forEach((item) => {
+                memoryItems.push({
+                  key: item.key,
+                  value: item.value,
+                  tags: item.tags || [],
+                  operation: 'store'
+                });
+              });
+            }
+          }
+          else if (operation === 'store') {
+            const toolInput = z.safeParse(memoryStoreSchema, toolPart.input);
+            if (toolInput.success) {
+              // Single store operation
+              memoryItems.push({
+                key: toolInput.data.key,
+                value: toolInput.data.value,
+                tags: toolInput.data.tags || [],
+                operation: 'store'
+              });
+            }
+          } else if (operation === 'retrieve' || operation === 'search') {
+            // Handle retrieve/search operations
+            const results = toolPart.output as { results: [] };
+            if (Array.isArray(results)) {
+              results.forEach((result: Memory & { similarity: number, created_at: string }) => {
+                memoryItems.push({
+                  id: result.id,
+                  key: result.key,
+                  value: result.value,
+                  tags: typeof result.tags === 'string' ? JSON.parse(result.tags) : result.tags || [],
+                  created_at: result.created_at,
+                  similarity: result.similarity,
+                  operation: 'retrieve'
+                });
+              });
+            }
+          } else if (operation === 'update') {
+            // Handle update operations
+            const toolInput = z.safeParse(memoryUpdateSchema, toolPart.input);
+            if (toolInput.success) {
+              memoryItems.push({
+                key: toolInput.data.key,
+                value: toolInput.data.value,
+                tags: toolInput.data.tags || [],
+                operation: 'update'
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing memory data:', error);
+        }
+      }
+    }
+  });
+
+  return memoryItems;
+};
+
+
+export const MemoryDisplay = ({ message, className }: MemoryDisplayProps) => {
   const [isOpen, setIsOpen] = React.useState(false)
-  
+  const memories = extractMemoryFromMessage(message)
+
   if (!memories || memories.length === 0) return null
 
   const groupedMemories = memories.reduce((acc, memory) => {
@@ -74,6 +161,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
   }
 
   return (
+    <div className="mb-3 p-2 rounded-lg bg-gradient-to-r from-purple-50/50 via-transparent to-blue-50/50 dark:from-purple-950/20 dark:via-transparent dark:to-blue-950/20 border border-purple-100/50 dark:border-purple-900/30">
     <div className={cn("w-full", className)}>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
@@ -116,12 +204,12 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
             </div>
           </Button>
         </CollapsibleTrigger>
-        
+
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1">
           <div className="space-y-3 p-3 pt-0">
             {Object.entries(groupedMemories).map(([operation, operationMemories], operationIndex) => (
-              <div 
-                key={operation} 
+              <div
+                key={operation}
                 className="space-y-2"
                 style={{
                   animationDelay: `${operationIndex * 50}ms`
@@ -132,12 +220,12 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                   <span className="capitalize">{operation}</span>
                   <div className="h-px bg-gradient-to-r from-border to-transparent flex-1" />
                 </div>
-                
+
                 <div className="space-y-2">
                   {operationMemories.map((memory, index) => (
                     <HoverCard key={`${operation}-${index}`}>
                       <HoverCardTrigger asChild>
-                        <div 
+                        <div
                           className={cn(
                             "group/memory p-3 rounded-lg border bg-card/50 hover:bg-card transition-all duration-200 cursor-pointer hover:shadow-md hover:scale-[1.02] hover:border-border",
                             getOperationColor(operation).replace(/text-\w+-\d+/, '').replace(/border-\w+-\d+/, '')
@@ -162,7 +250,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                                 {memory.value}
                               </p>
                             </div>
-                            
+
                             {memory.created_at && (
                               <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 opacity-70 group-hover/memory:opacity-100 transition-opacity">
                                 <Clock className="size-3" />
@@ -170,7 +258,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                               </div>
                             )}
                           </div>
-                          
+
                           {memory.tags && memory.tags.length > 0 && (
                             <div className="flex items-center gap-1 mt-2 flex-wrap">
                               <Tag className="size-3 text-muted-foreground opacity-70 group-hover/memory:opacity-100 transition-opacity" />
@@ -195,7 +283,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                           )}
                         </div>
                       </HoverCardTrigger>
-                      
+
                       <HoverCardContent side="left" className="w-80 bg-gradient-to-br from-card via-card to-card/80 shadow-xl border-2">
                         <div className="space-y-3">
                           <div className="border-b border-border/30 pb-2">
@@ -204,7 +292,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                               {memory.value}
                             </p>
                           </div>
-                          
+
                           {memory.tags && memory.tags.length > 0 && (
                             <div>
                               <div className="flex items-center gap-1 mb-2">
@@ -224,7 +312,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                               </div>
                             </div>
                           )}
-                          
+
                           <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-border/30">
                             <div className={cn(
                               "flex items-center gap-1 px-2 py-1 rounded-md",
@@ -240,7 +328,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                               </div>
                             )}
                           </div>
-                          
+
                           {memory.similarity && (
                             <div className="bg-accent/30 p-2 rounded-md border border-border/20">
                               <div className="flex items-center justify-between text-xs">
@@ -250,7 +338,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
                                 </span>
                               </div>
                               <div className="mt-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                                <div 
+                                <div
                                   className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-500"
                                   style={{ width: `${Math.round((1 - memory.similarity) * 100)}%` }}
                                 />
@@ -267,6 +355,7 @@ export const MemoryDisplay = ({ memories, className }: MemoryDisplayProps) => {
           </div>
         </CollapsibleContent>
       </Collapsible>
+    </div>
     </div>
   )
 }

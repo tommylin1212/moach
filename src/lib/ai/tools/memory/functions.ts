@@ -1,13 +1,14 @@
 import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema, memorySearchByTagsSchema, memorySearchByKeySchema } from './schemas';
 import { z } from 'zod';
-import { db, turso } from '@/lib/database/connection';
+import { getTursoClient, getDrizzleClient } from '@/lib/database/connection';
 import { memory } from '@/lib/database/schema';
 import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
-import { eq, and, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
+import { aiLog, dbLog, log } from '@/lib/logging';
 const generateEmbedding = async (text: string): Promise<number[]> => {
-    console.log('Generating embedding for:', text);
+    
     const { embedding } = await embed({
         model: openai.embedding('text-embedding-3-small'),
         value: text,
@@ -21,7 +22,6 @@ const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 export const memoryStoreFunction = async (key: string, value: string, tags: string[]) => {
-    console.log('Storing single memory',JSON.stringify({ key, value, tags },null,2));
     const { success, error } = memoryStoreSchema.safeParse({ key, value, tags });
     if (!success) {
         console.error('Error storing memory:', error);
@@ -30,7 +30,7 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
     try {
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
-        
+        const db = await getDrizzleClient();
         await db.insert(memory)
             .values({
                 key,
@@ -48,14 +48,13 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
                 },
             });
     } catch (error: any) {
-        console.error('Error storing memory:', error);
+        aiLog.error('memoryStore', error);
         return { success: false, error: error.message };
     }
     return { success: true, message: 'Memory stored successfully' };
 }
 
 export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]) => {
-    console.log('Storing multiple memories',JSON.stringify(memoryList,null,2));
     const { success, error } = memoryStoreMultipleSchema.safeParse({ memoryList });
     if (!success) {
         console.error('Error storing multiple memories:', error);
@@ -77,7 +76,7 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
                 };
             })
         );
-
+        const db = await getDrizzleClient();
         // Batch upsert all memories using Drizzle
         for (const entry of memoryEntries) {
             await db.insert(memory)
@@ -100,7 +99,6 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
 }
 
 export const memoryRetrieveFunction = async (embeddingQuery: string) => {
-    console.log('Retrieving memory for query:', embeddingQuery);
     const { success, error } = memoryRetrieveSchema.safeParse({ embeddingQuery });
     if (!success) {
         console.error('Error retrieving memory:', error);
@@ -111,7 +109,7 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
 
         // Generate embedding for the query
         const queryEmbedding = await generateEmbedding(embeddingQuery);
-
+        const turso = await getTursoClient();
         // Use vector similarity search - need raw SQL for vector operations
         const result = await turso.execute(`
             SELECT id, key, value, tags, created_at,
@@ -130,7 +128,6 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
 }
 
 export const memoryUpdateFunction = async (key: string, value: string, tags: string[]) => {
-    console.log('Updating memory for key:', key);
     const { success, error } = memoryUpdateSchema.safeParse({ key, value, tags });
     if (!success) {
         return { success: false, error: error.message };
@@ -138,7 +135,7 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
     try {
         const user_id = await getUser();
         const embedding = await generateEmbedding(value);
-        
+        const db = await getDrizzleClient();
         await db.insert(memory)
             .values({
                 key,
@@ -163,7 +160,6 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
 }
 
 export const memorySemanticSearchFunction = async (embeddingQuery: string, limit: number = 5) => {
-    console.log('Semantic search for:', embeddingQuery);
     const { success, error } = memorySemanticSearchSchema.safeParse({ embeddingQuery, limit });
     if (!success) {
         return { success: false, error: error.message };
@@ -173,7 +169,7 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
 
         // Generate embedding for the search query
         const queryEmbedding = await generateEmbedding(embeddingQuery);
-
+        const turso = await getTursoClient();
         // Perform semantic search with configurable limit - need raw SQL for vector operations
         const result = await turso.execute(`
             SELECT id, key, value, tags, created_at,
@@ -201,7 +197,6 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
 }
 
 export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10) => {
-    console.log('Searching memories by tags:', tags);
     const { success, error } = memorySearchByTagsSchema.safeParse({ tags, limit });
     if (!success) {
         return { success: false, error: error.message };
@@ -213,6 +208,7 @@ export const memorySearchByTagsFunction = async (tags: string[], limit: number =
         const tagConditions = tags.map(() => 'tags LIKE ?').join(' OR ');
         const tagValues = tags.map(tag => `%"${tag}"%`);
 
+        const turso = await getTursoClient();
         const result = await turso.execute(`
             SELECT id, key, value, tags, created_at
             FROM memory 
@@ -243,7 +239,6 @@ export const memorySearchByTagsFunction = async (tags: string[], limit: number =
 }
 
 export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10) => {
-    console.log('Searching memories by key pattern:', keyPattern, 'exactMatch:', exactMatch);
     const { success, error } = memorySearchByKeySchema.safeParse({ keyPattern, exactMatch, limit });
     if (!success) {
         return { success: false, error: error.message };
@@ -276,6 +271,7 @@ export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: 
             queryValues = [user_id, `%${keyPattern}%`, limit];
         }
 
+        const turso = await getTursoClient();
         const result = await turso.execute(query, queryValues);
 
         // Format results
