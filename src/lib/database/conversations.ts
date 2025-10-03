@@ -1,6 +1,6 @@
 'use server'
 import { eq, desc, and, asc} from "drizzle-orm";
-import { getDrizzleClient, getTursoClient } from "./connection";
+import { getDrizzleClient } from "./connection";
 import { conversations, messages, type Conversation, type Message } from "./schema";
 import { getUser } from "../auth/user";
 import type { UIDataTypes, UIMessage, UIMessagePart, UITools } from "ai";
@@ -158,22 +158,20 @@ export async function deleteConversation(conversationId: string): Promise<{
 }> {
   try {
     const userId = await getUser();
-    const turso = await getTursoClient();
+    const db = await getDrizzleClient();
+    
     // Verify ownership
-    const result = await turso.execute(
-      `SELECT id FROM conversations WHERE id = ? AND user_id = ?`,
-      [conversationId, userId]
-    );
+    const existingConversation = await db.select()
+      .from(conversations)
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)));
 
-    if (result.rows.length === 0) {
+    if (existingConversation.length === 0) {
       return { success: false, error: 'Conversation not found' };
     }
 
     // Delete conversation (cascade will delete messages)
-    await turso.execute(
-      `DELETE FROM conversations WHERE id = ? AND user_id = ?`,
-      [conversationId, userId]
-    );
+    await db.delete(conversations)
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)));
 
     return { success: true };
   } catch (error) {
@@ -192,14 +190,21 @@ export async function updateConversationTitle(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const userId = await getUser();
-    const turso = await getTursoClient();
-    const result = await turso.execute(`
-      UPDATE conversations 
-      SET title = ?, updated_at = ? 
-      WHERE id = ? AND user_id = ?
-    `, [title, new Date().toISOString(), conversationId, userId]);
+    const db = await getDrizzleClient();
+    
+    const result = await db.update(conversations)
+      .set({ 
+        title: title, 
+        updatedAt: new Date().toISOString() 
+      })
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)));
 
-    if (result.rowsAffected === 0) {
+    // Note: Drizzle doesn't return rowsAffected directly, so we'll verify the update
+    const updatedConversation = await db.select()
+      .from(conversations)
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)));
+      
+    if (updatedConversation.length === 0) {
       return { success: false, error: 'Conversation not found' };
     }
 

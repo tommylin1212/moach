@@ -19,9 +19,6 @@ const client = createClient({
 // Create Drizzle database instance with schema
 const db = drizzle(client, { schema });
 
-export async function getTursoClient() {
-  return client;
-}
 
 export async function getDrizzleClient() {
   return db;

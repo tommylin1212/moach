@@ -1,12 +1,31 @@
 import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema, memorySearchByTagsSchema, memorySearchByKeySchema } from './schemas';
-import { getTursoClient, getDrizzleClient } from '@/lib/database/connection';
+import { getDrizzleClient } from '@/lib/database/connection';
 import { memory } from '@/lib/database/schema';
 import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
 import { sql } from 'drizzle-orm';
+
+// Types for better type safety
+type MemoryResult = {
+    success: boolean;
+    error?: string;
+    message?: string;
+    results?: any[];
+    count?: number;
+};
+
+type MemoryRow = {
+    id: string;
+    key: string;
+    value: string;
+    tags: string;
+    created_at: string;
+    similarity_score?: number;
+};
+
+// Common utilities
 const generateEmbedding = async (text: string): Promise<number[]> => {
-    
     const { embedding } = await embed({
         model: openai.embedding('text-embedding-3-small'),
         value: text,
@@ -19,48 +38,81 @@ const generateEmbedding = async (text: string): Promise<number[]> => {
     return embedding;
 };
 
-export const memoryStoreFunction = async (key: string, value: string, tags: string[]) => {
+const handleError = (error: unknown, operation: string): MemoryResult => {
+    console.error(`Error ${operation}:`, error);
+    return { 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error) 
+    };
+};
+
+const formatMemoryResults = (rows: any[]): any[] => {
+    return rows.map((row: MemoryRow) => ({
+        id: row.id,
+        key: row.key,
+        value: row.value,
+        tags: JSON.parse(row.tags),
+        created_at: row.created_at,
+        ...(row.similarity_score !== undefined && { similarity_score: row.similarity_score })
+    }));
+};
+
+const upsertMemory = async (db: any, memoryData: {
+    key: string;
+    value: string;
+    tags: string;
+    userId: string;
+    embedding: number[];
+}) => {
+    return db.insert(memory)
+        .values(memoryData)
+        .onConflictDoUpdate({
+            target: [memory.key, memory.userId],
+            set: {
+                value: sql`excluded.value`,
+                tags: sql`excluded.tags`,
+                embedding: sql`excluded.embedding`,
+            },
+        });
+};
+
+export const memoryStoreFunction = async (key: string, value: string, tags: string[]): Promise<MemoryResult> => {
     const { success, error } = memoryStoreSchema.safeParse({ key, value, tags });
     if (!success) {
-        console.error('Error storing memory:', error);
         return { success: false, error: error.message };
     }
+
     try {
-        const user_id = await getUser();
-        const embedding = await generateEmbedding(value);
-        const db = await getDrizzleClient();
-        await db.insert(memory)
-            .values({
-                key,
-                value,
-                tags: JSON.stringify(tags),
-                userId: user_id,
-                embedding,
-            })
-            .onConflictDoUpdate({
-                target: [memory.key, memory.userId],
-                set: {
-                    value: sql`excluded.value`,
-                    tags: sql`excluded.tags`,
-                    embedding: sql`excluded.embedding`,
-                },
-            });
+        const [user_id, embedding, db] = await Promise.all([
+            getUser(),
+            generateEmbedding(value),
+            getDrizzleClient()
+        ]);
+
+        await upsertMemory(db, {
+            key,
+            value,
+            tags: JSON.stringify(tags),
+            userId: user_id,
+            embedding,
+        });
+
+        return { success: true, message: 'Memory stored successfully' };
     } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'storing memory');
     }
-    return { success: true, message: 'Memory stored successfully' };
 }
 
-export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]) => {
+export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]): Promise<MemoryResult> => {
     const { success, error } = memoryStoreMultipleSchema.safeParse({ memoryList });
     if (!success) {
-        console.error('Error storing multiple memories:', error);
         return { success: false, error: error.message };
     }
-    try {
-        const user_id = await getUser();
 
-        // Process each memory entry and generate embeddings
+    try {
+        const [user_id, db] = await Promise.all([getUser(), getDrizzleClient()]);
+
+        // Process each memory entry and generate embeddings in parallel
         const memoryEntries = await Promise.all(
             memoryList.map(async (memoryItem) => {
                 const embedding = await generateEmbedding(memoryItem.value);
@@ -73,222 +125,177 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
                 };
             })
         );
-        const db = await getDrizzleClient();
-        // Batch upsert all memories using Drizzle
-        for (const entry of memoryEntries) {
-            await db.insert(memory)
-                .values(entry)
-                .onConflictDoUpdate({
-                    target: [memory.key, memory.userId],
-                    set: {
-                        value: sql`excluded.value`,
-                        tags: sql`excluded.tags`,
-                        embedding: sql`excluded.embedding`,
-                    },
-                });
-        }
-        return { success: true, count: memoryEntries.length, message: 'Memories stored successfully' };
 
+        // Batch upsert all memories
+        await Promise.all(memoryEntries.map(entry => upsertMemory(db, entry)));
+
+        return { 
+            success: true, 
+            count: memoryEntries.length, 
+            message: 'Memories stored successfully' 
+        };
     } catch (error) {
-        console.error('Error storing multiple memories:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'storing multiple memories');
     }
 }
 
 export const memoryRetrieveFunction = async (embeddingQuery: string) => {
     const { success, error } = memoryRetrieveSchema.safeParse({ embeddingQuery });
     if (!success) {
-        console.error('Error retrieving memory:', error);
         return { success: false, error: error.message };
     }
+
     try {
-        const user_id = await getUser();
+        const [user_id, queryEmbedding, db] = await Promise.all([
+            getUser(),
+            generateEmbedding(embeddingQuery),
+            getDrizzleClient()
+        ]);
 
-        // Generate embedding for the query
-        const queryEmbedding = await generateEmbedding(embeddingQuery);
-        const turso = await getTursoClient();
-        // Use vector similarity search - need raw SQL for vector operations
-        const result = await turso.execute(`
+        const result = await db.all(sql`
             SELECT id, key, value, tags, created_at,
-                   vector_distance_cos(embedding, ?) as similarity
+                   vector_distance_cos(embedding, ${JSON.stringify(queryEmbedding)}) as similarity_score
             FROM memory 
-            WHERE user_id = ?
-            ORDER BY similarity ASC
+            WHERE user_id = ${user_id}
+            ORDER BY similarity_score ASC
             LIMIT 5
-        `, [JSON.stringify(queryEmbedding), user_id]);
+        `);
 
-        return result.rows.length > 0 ? result.rows : null;
+        return result.length > 0 ? formatMemoryResults(result) : null;
     } catch (error) {
-        console.error('Error retrieving memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'retrieving memory');
     }
 }
 
-export const memoryUpdateFunction = async (key: string, value: string, tags: string[]) => {
+export const memoryUpdateFunction = async (key: string, value: string, tags: string[]): Promise<MemoryResult> => {
     const { success, error } = memoryUpdateSchema.safeParse({ key, value, tags });
     if (!success) {
         return { success: false, error: error.message };
     }
+
     try {
-        const user_id = await getUser();
-        const embedding = await generateEmbedding(value);
-        const db = await getDrizzleClient();
-        await db.insert(memory)
-            .values({
-                key,
-                value,
-                tags: JSON.stringify(tags),
-                userId: user_id,
-                embedding,
-            })
-            .onConflictDoUpdate({
-                target: [memory.key, memory.userId],
-                set: {
-                    value: sql`excluded.value`,
-                    tags: sql`excluded.tags`,
-                    embedding: sql`excluded.embedding`,
-                },
-            });
+        const [user_id, embedding, db] = await Promise.all([
+            getUser(),
+            generateEmbedding(value),
+            getDrizzleClient()
+        ]);
+
+        await upsertMemory(db, {
+            key,
+            value,
+            tags: JSON.stringify(tags),
+            userId: user_id,
+            embedding,
+        });
+
+        return { success: true, message: 'Memory updated successfully' };
     } catch (error) {
-        console.error('Error updating memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'updating memory');
     }
-    return { success: true, message: 'Memory updated successfully' };
 }
 
-export const memorySemanticSearchFunction = async (embeddingQuery: string, limit: number = 5) => {
+export const memorySemanticSearchFunction = async (embeddingQuery: string, limit: number = 5): Promise<MemoryResult> => {
     const { success, error } = memorySemanticSearchSchema.safeParse({ embeddingQuery, limit });
     if (!success) {
         return { success: false, error: error.message };
     }
-    try {
-        const user_id = await getUser();
 
-        // Generate embedding for the search query
-        const queryEmbedding = await generateEmbedding(embeddingQuery);
-        const turso = await getTursoClient();
-        // Perform semantic search with configurable limit - need raw SQL for vector operations
-        const result = await turso.execute(`
+    try {
+        const [user_id, queryEmbedding, db] = await Promise.all([
+            getUser(),
+            generateEmbedding(embeddingQuery),
+            getDrizzleClient()
+        ]);
+
+        const result = await db.all(sql`
             SELECT id, key, value, tags, created_at,
-                   vector_distance_cos(embedding, ?) as similarity_score
+                   vector_distance_cos(embedding, ${JSON.stringify(queryEmbedding)}) as similarity_score
             FROM memory 
-            WHERE user_id = ?
+            WHERE user_id = ${user_id}
             ORDER BY similarity_score ASC
-            LIMIT ?
-        `, [JSON.stringify(queryEmbedding), user_id, limit]);
+            LIMIT ${limit}
+        `);
         
-        // Return formatted results with similarity scores
-        const results = result.rows.map(row => ({
-            id: row.id,
-            key: row.key,
-            value: row.value,
-            tags: JSON.parse(row.tags as string),
-            created_at: row.created_at,
-            similarity_score: row.similarity_score
-        }));
-        return { success: true, results: results, message: 'Memory semantic search successfully' };
+        const results = formatMemoryResults(result);
+        return { 
+            success: true, 
+            results, 
+            count: results.length,
+            message: 'Memory semantic search completed successfully' 
+        };
     } catch (error) {
-        console.error('Error semantic searching memory:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'performing semantic search');
     }
 }
 
-export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10) => {
+export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10): Promise<MemoryResult> => {
     const { success, error } = memorySearchByTagsSchema.safeParse({ tags, limit });
     if (!success) {
         return { success: false, error: error.message };
     }
+
     try {
-        const user_id = await getUser();
+        const [user_id, db] = await Promise.all([getUser(), getDrizzleClient()]);
 
-        // Create placeholders for tags - we'll use JSON_EXTRACT or LIKE for tag matching
-        const tagConditions = tags.map(() => 'tags LIKE ?').join(' OR ');
+        // Create tag conditions using SQL template literals
         const tagValues = tags.map(tag => `%"${tag}"%`);
+        const tagConditions = tags.map((_, index) => sql`tags LIKE ${tagValues[index]}`);
 
-        const turso = await getTursoClient();
-        const result = await turso.execute(`
+        const result = await db.all(sql`
             SELECT id, key, value, tags, created_at
             FROM memory 
-            WHERE user_id = ? AND (${tagConditions})
+            WHERE user_id = ${user_id} AND (${sql.join(tagConditions, sql` OR `)})
             ORDER BY created_at DESC
-            LIMIT ?
-        `, [user_id, ...tagValues, limit]);
+            LIMIT ${limit}
+        `);
 
-        // Format results
-        const results = result.rows.map(row => ({
-            id: row.id,
-            key: row.key,
-            value: row.value,
-            tags: JSON.parse(row.tags as string),
-            created_at: row.created_at
-        }));
-
+        const results = formatMemoryResults(result);
         return { 
             success: true, 
-            results: results, 
+            results, 
             count: results.length,
             message: `Found ${results.length} memories with tags: ${tags.join(', ')}` 
         };
     } catch (error) {
-        console.error('Error searching memories by tags:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'searching memories by tags');
     }
 }
 
-export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10) => {
+export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10): Promise<MemoryResult> => {
     const { success, error } = memorySearchByKeySchema.safeParse({ keyPattern, exactMatch, limit });
     if (!success) {
         return { success: false, error: error.message };
     }
+
     try {
-        const user_id = await getUser();
-
-        let query: string;
-        let queryValues: any[];
-
-        if (exactMatch) {
-            // Exact key match
-            query = `
+        const [user_id, db] = await Promise.all([getUser(), getDrizzleClient()]);
+        
+        const result = exactMatch 
+            ? await db.all(sql`
                 SELECT id, key, value, tags, created_at
                 FROM memory 
-                WHERE user_id = ? AND key = ?
+                WHERE user_id = ${user_id} AND key = ${keyPattern}
                 ORDER BY created_at DESC
-                LIMIT ?
-            `;
-            queryValues = [user_id, keyPattern, limit];
-        } else {
-            // Partial key match using LIKE
-            query = `
+                LIMIT ${limit}
+            `)
+            : await db.all(sql`
                 SELECT id, key, value, tags, created_at
                 FROM memory 
-                WHERE user_id = ? AND key LIKE ?
+                WHERE user_id = ${user_id} AND key LIKE ${`%${keyPattern}%`}
                 ORDER BY created_at DESC
-                LIMIT ?
-            `;
-            queryValues = [user_id, `%${keyPattern}%`, limit];
-        }
+                LIMIT ${limit}
+            `);
 
-        const turso = await getTursoClient();
-        const result = await turso.execute(query, queryValues);
-
-        // Format results
-        const results = result.rows.map(row => ({
-            id: row.id,
-            key: row.key,
-            value: row.value,
-            tags: JSON.parse(row.tags as string),
-            created_at: row.created_at
-        }));
-
+        const results = formatMemoryResults(result);
         const matchType = exactMatch ? 'exact' : 'partial';
+        
         return { 
             success: true, 
-            results: results, 
+            results, 
             count: results.length,
             message: `Found ${results.length} memories with ${matchType} key match: "${keyPattern}"` 
         };
     } catch (error) {
-        console.error('Error searching memories by key:', error);
-        return { success: false, error: error instanceof Error ? error.message : String(error) };
+        return handleError(error, 'searching memories by key');
     }
 }
