@@ -50,18 +50,8 @@ export default function Page() {
   if conversationId is provided, load the conversation
   if conversationId is not provided, gen new conversation id and change url to include conversationId
   */
-  useEffect(() => {
-    const urlConversationId = new URLSearchParams(window.location.search).get('conversationId');
-    if (urlConversationId && urlConversationId !== null) {
-      setConversationId(urlConversationId);
-      loadConversationById(urlConversationId);
-    } else {
-      const newConversationId = generateConversationId();
-      setConversationId(newConversationId);
-      window.history.pushState({}, '', `?conversationId=${newConversationId}`);
-    }
-  });
   
+
   const {
     messages,
     sendMessage,
@@ -74,6 +64,18 @@ export default function Page() {
     deleteConversationById,
     updateTitle
   } = useConversation({ initialConversationId: conversationId || undefined });
+  
+  useEffect(() => {
+    const urlConversationId = new URLSearchParams(window.location.search).get('conversationId');
+    if (urlConversationId && urlConversationId !== null) {
+      setConversationId(urlConversationId);
+      loadConversationById(urlConversationId);
+    } else {
+      const newConversationId = generateConversationId();
+      setConversationId(newConversationId);
+      window.history.pushState({}, '', `?conversationId=${newConversationId}`);
+    }
+  },[loadConversationById]);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
