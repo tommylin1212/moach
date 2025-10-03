@@ -5,7 +5,6 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
-import { Message, MessageContent } from '@/components/ai-elements/message';
 import {
   PromptInput,
   PromptInputButton,
@@ -21,13 +20,7 @@ import {
 } from '@/components/ai-elements/prompt-input';
 import { useEffect, useState } from 'react';
 import { useConversation } from '@/lib/hooks/useConversation';
-import { Response } from '@/components/ai-elements/response';
 import { BrainIcon, GlobeIcon } from 'lucide-react';
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from '@/components/ai-elements/reasoning';
 import { Loader } from '@/components/ai-elements/loader';
 import { MemoryDisplay } from '@/components/conversation-elements/memory';
 import SourceDisplay from '@/components/conversation-elements/source';
@@ -67,7 +60,8 @@ export default function Page() {
       setConversationId(newConversationId);
       window.history.pushState({}, '', `?conversationId=${newConversationId}`);
     }
-  }, []);
+  });
+  
   const {
     messages,
     sendMessage,

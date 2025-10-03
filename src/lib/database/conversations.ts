@@ -1,13 +1,11 @@
 'use server'
-import { eq, desc, and, asc, sql } from "drizzle-orm";
+import { eq, desc, and, asc} from "drizzle-orm";
 import { getDrizzleClient, getTursoClient } from "./connection";
 import { conversations, messages, type Conversation, type Message } from "./schema";
 import { getUser } from "../auth/user";
 import type { UIDataTypes, UIMessage, UIMessagePart, UITools } from "ai";
-import { saveMessage, saveMessages } from "./messages";
+import { saveMessages } from "./messages";
 import { generateTitle } from "../ai/serverFunctions/generateTitle";
-import { generateConversationId } from "../utils";
-import { dbLog, log } from "../logging";
 
 
 // Generate a simple conversation title from the first user message
@@ -42,7 +40,6 @@ export async function createNewConversation(firstMessage: UIMessage, conversatio
   try {
     const db = await getDrizzleClient();
     const userId = await getUser();
-    dbLog.query('CREATE', 'conversations', Date.now() - startTime);
     // Generate title from first user message if not provided
     const finalTitle = await generateTitleIfNotProvided([firstMessage]);
     const now = new Date().toISOString();
@@ -59,9 +56,6 @@ export async function createNewConversation(firstMessage: UIMessage, conversatio
 
     return { conversationId, success: true };
   } catch (error) {
-    const duration = Date.now() - startTime;
-    dbLog.error('CREATE', 'conversations', error as Error);
-    log.error('Failed to create new conversation', error);
     return {
       conversationId: '',
       success: false,
@@ -74,7 +68,6 @@ export async function createNewConversation(firstMessage: UIMessage, conversatio
 export async function saveConversation(conversationId: string, messages: UIMessage[]): Promise<{ success: boolean; error?: string }> {
   const startTime = Date.now();
   try {
-    dbLog.query('SAVE', 'conversations', Date.now() - startTime);
     if(!(await doesConversationExist(conversationId)).exists){
       await createNewConversation(messages[0], conversationId);
     }
@@ -83,8 +76,6 @@ export async function saveConversation(conversationId: string, messages: UIMessa
 
     return { success: true };
   } catch (error) {
-    dbLog.error('SAVE', 'conversations', error as Error);
-    log.error('Failed to save conversation', error);
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

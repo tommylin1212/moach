@@ -1,8 +1,7 @@
-import { streamText, UIMessage, convertToModelMessages, tool, stepCountIs, embed, createIdGenerator } from 'ai';
+import { streamText, UIMessage, convertToModelMessages, stepCountIs, createIdGenerator } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { memoryTools } from '@/lib/ai/tools/memory/tools';
 import { saveConversation } from '@/lib/database/conversations';
-import { apiLog, aiLog } from '@/lib/logging';
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 50;
 
@@ -20,7 +19,6 @@ If you think you could ask a question to the user to learn more about them, do i
 `;
 
 export async function POST(req: Request) {
-    const startTime = Date.now();
 
     try {
         const {
@@ -37,13 +35,8 @@ export async function POST(req: Request) {
             conversationId: string;
         } = await req.json();
 
-        apiLog.request('POST', '/api/chat', 'user'); // TODO: Get actual user ID
-        aiLog.chatRequest(messages.length, model);
+        const result = await openaiConversation(messages, webSearch, memory);
 
-        const result = await openaiConversation(messages, webSearch, memory, conversationId);
-
-        const duration = Date.now() - startTime;
-        apiLog.response('POST', '/api/chat', 200, duration);
         const originalMessages = messages;
         return result.toUIMessageStreamResponse(
             {
@@ -59,13 +52,11 @@ export async function POST(req: Request) {
             }
         );
     } catch (error) {
-        const duration = Date.now() - startTime;
-        apiLog.error('POST', '/api/chat', error as Error);
         throw error;
     }
 }
 
-const openaiConversation = async (messages: UIMessage[], webSearch: boolean, memory: boolean, conversationId?: string) => {
+const openaiConversation = async (messages: UIMessage[], webSearch: boolean, memory: boolean) => {
     const result = streamText({
         system: systemPrompt,
         model: openai('gpt-5'),
@@ -86,10 +77,3 @@ const openaiConversation = async (messages: UIMessage[], webSearch: boolean, mem
     });
     return result;
 }
-
-
-
-function createMessageIdGenerator(): string {
-    throw new Error('Function not implemented.');
-}
-

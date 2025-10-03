@@ -1,12 +1,10 @@
 import { memoryStoreSchema, memoryStoreMultipleSchema, memoryRetrieveSchema, memoryUpdateSchema, memorySemanticSearchSchema, memorySearchByTagsSchema, memorySearchByKeySchema } from './schemas';
-import { z } from 'zod';
 import { getTursoClient, getDrizzleClient } from '@/lib/database/connection';
 import { memory } from '@/lib/database/schema';
 import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
 import { sql } from 'drizzle-orm';
-import { aiLog, dbLog, log } from '@/lib/logging';
 const generateEmbedding = async (text: string): Promise<number[]> => {
     
     const { embedding } = await embed({
@@ -47,9 +45,8 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
                     embedding: sql`excluded.embedding`,
                 },
             });
-    } catch (error: any) {
-        aiLog.error('memoryStore', error);
-        return { success: false, error: error.message };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
     return { success: true, message: 'Memory stored successfully' };
 }
