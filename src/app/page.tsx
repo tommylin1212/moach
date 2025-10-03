@@ -5,7 +5,6 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
-import { Message, MessageContent } from '@/components/ai-elements/message';
 import {
   PromptInput,
   PromptInputButton,
@@ -19,22 +18,15 @@ import {
   PromptInputToolbar,
   PromptInputTools,
 } from '@/components/ai-elements/prompt-input';
-import { useState } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { Response } from '@/components/ai-elements/response';
+import { useEffect, useState } from 'react';
+import { useConversation } from '@/lib/hooks/useConversation';
 import { BrainIcon, GlobeIcon } from 'lucide-react';
-import {
-  Source,
-  Sources,
-  SourcesContent,
-  SourcesTrigger,
-} from '@/components/ai-elements/source';
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
-} from '@/components/ai-elements/reasoning';
 import { Loader } from '@/components/ai-elements/loader';
+import { MemoryDisplay } from '@/components/conversation-elements/memory';
+import SourceDisplay from '@/components/conversation-elements/source';
+import { generateConversationId } from '@/lib/utils';
+import ConversationSidebar from '@/components/conversation-elements/conversation-sidebar';
+import MessageDisplay from '@/components/conversation-elements/messages';
 
 const models = [
   {
@@ -47,13 +39,44 @@ const models = [
   },
 ];
 
-const ChatBotDemo = () => {
+export default function Page() {
   const [input, setInput] = useState('');
   const [model, setModel] = useState<string>(models[0].value);
   const [webSearch, setWebSearch] = useState(false);
   const [memory, setMemory] = useState(true);
-  const { messages, sendMessage, status } = useChat();
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  /*
+  Check query params for conversationId
+  if conversationId is provided, load the conversation
+  if conversationId is not provided, gen new conversation id and change url to include conversationId
+  */
+  
 
+  const {
+    messages,
+    sendMessage,
+    status,
+    currentConversationId,
+    conversations,
+    isLoading,
+    startNewConversation,
+    loadConversationById,
+    deleteConversationById,
+    updateTitle
+  } = useConversation({ initialConversationId: conversationId || undefined });
+  
+  useEffect(() => {
+    const urlConversationId = new URLSearchParams(window.location.search).get('conversationId');
+    if (urlConversationId && urlConversationId !== null) {
+      setConversationId(urlConversationId);
+      loadConversationById(urlConversationId);
+    } else {
+      const newConversationId = generateConversationId();
+      setConversationId(newConversationId);
+      window.history.pushState({}, '', `?conversationId=${newConversationId}`);
+    }
+  },[loadConversationById]);
+  
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim()) {
@@ -64,73 +87,43 @@ const ChatBotDemo = () => {
             model: model,
             webSearch: webSearch,
             memory: memory,
+            conversationId: currentConversationId,
           },
         },
       );
       setInput('');
     }
   };
-  console.log(status)
-  console.log(messages)
   return (
-    <div className="max-w-4xl mx-auto p-6 relative size-full h-screen">
-      <div className="flex flex-col h-full">
+    <div className="flex h-screen">
+      {/* Conversation Sidebar */}
+      <ConversationSidebar
+        conversations={conversations}
+        currentConversationId={currentConversationId}
+        isLoading={isLoading}
+        onNewConversation={startNewConversation}
+        onLoadConversation={loadConversationById}
+        onDeleteConversation={deleteConversationById}
+        onUpdateTitle={updateTitle}
+      />
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col max-w-4xl mx-auto p-6 relative">
         <Conversation className="h-full">
           <ConversationContent>
-            {messages.map((message) => (
-              <div key={message.id}>
-                {message.role === 'assistant' && (() => {
-                  const sourceUrls = message.parts.filter(part => part.type === 'source-url');
-                  const uniqueSourceUrls = sourceUrls.filter((part, index, self) => 
-                    index === self.findIndex(p => p.url === part.url)
-                  );
-                  return uniqueSourceUrls.length > 0 ? (
-                    <Sources>
-                      <SourcesTrigger count={uniqueSourceUrls.length} />
-                      <SourcesContent>
-                        {uniqueSourceUrls.map((part, i) => (
-                          <Source
-                            key={`${message.id}-${i}`}
-                            href={part.url}
-                            title={part.url}
-                          />
-                        ))}
-                      </SourcesContent>
-                    </Sources>
-                  ) : null;
-                })()}
-                <Message from={message.role} key={message.id}>
-                  <MessageContent>
-                    {message.parts.map((part, i) => {
-                      message.parts.forEach(part => {
-                        console.log(part.type)
-                      })
-                      switch (part.type) {
-                        case 'text':
-                          return (
-                            <Response key={`${message.id}-${i}`}>
-                              {part.text}
-                            </Response>
-                          );
-                        case 'reasoning':
-                          return (
-                            <Reasoning
-                              key={`${message.id}-${i}`}
-                              className="w-full"
-                              isStreaming={status === 'streaming'}
-                            >
-                              <ReasoningTrigger />
-                              <ReasoningContent>{part.text}</ReasoningContent>
-                            </Reasoning>
-                          );
-                        default:
-                          return null;
-                      }
-                    })}
-                  </MessageContent>
-                </Message>
-              </div>
-            ))}
+            {messages.map((message) => {
+
+              return (
+                <div key={message.id}>
+                  <SourceDisplay message={message} />
+
+                  <MemoryDisplay message={message} />
+
+
+                  <MessageDisplay message={message} />
+                </div>
+              );
+            })}
             {status === 'submitted' && <Loader />}
           </ConversationContent>
           <ConversationScrollButton />
@@ -182,5 +175,3 @@ const ChatBotDemo = () => {
     </div>
   );
 };
-
-export default ChatBotDemo;
