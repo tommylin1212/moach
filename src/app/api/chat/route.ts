@@ -3,7 +3,7 @@ import { openai } from '@ai-sdk/openai';
 import { memoryTools } from '@/lib/ai/tools/memory/tools';
 import { saveConversation } from '@/lib/database/conversations';
 // Allow streaming responses up to 30 seconds
-export const maxDuration = 50;
+export const maxDuration = 300;
 
 const systemPrompt = `
 You are Moach, a personal betterment coach.
