@@ -5,6 +5,7 @@ import { embed } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { getUser } from '@/lib/auth/user';
 import { sql } from 'drizzle-orm';
+import logger from '@/lib/logger';
 
 // Types for better type safety
 type MemoryResult = {
@@ -39,7 +40,19 @@ const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 const handleError = (error: unknown, operation: string): MemoryResult => {
-    console.error(`Error ${operation}:`, error);
+    logger.error(
+        error instanceof Error ? error : new Error(String(error)),
+        `Memory operation failed: ${operation}`
+    );
+    
+    logger.debug(
+        {
+            table: 'memory',
+            error: error instanceof Error ? error.message : String(error),
+        },
+        `Database error during ${operation}`
+    );
+    
     return { 
         success: false, 
         error: error instanceof Error ? error.message : String(error) 
@@ -77,8 +90,28 @@ const upsertMemory = async (db: any, memoryData: {
 };
 
 export const memoryStoreFunction = async (key: string, value: string, tags: string[]): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_store',
+            key,
+            tagsCount: tags.length,
+            valueLength: value.length,
+        },
+        'Starting memory store operation'
+    );
+    
     const { success, error } = memoryStoreSchema.safeParse({ key, value, tags });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_store',
+                key,
+                validationError: error.message,
+            },
+            'Memory store validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -97,6 +130,18 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
             embedding,
         });
 
+        const duration = Date.now() - startTime;
+        
+        logger.database(
+            {
+                operation: 'insert',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: 1,
+            },
+            `Memory stored successfully: ${key}`
+        );
+
         return { success: true, message: 'Memory stored successfully' };
     } catch (error) {
         return handleError(error, 'storing memory');
@@ -104,8 +149,25 @@ export const memoryStoreFunction = async (key: string, value: string, tags: stri
 }
 
 export const memoryStoreMultipleFunction = async (memoryList: { key: string, value: string, tags: string[] }[]): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_store_multiple',
+            memoryCount: memoryList.length,
+        },
+        `Starting batch memory store for ${memoryList.length} items`
+    );
+    
     const { success, error } = memoryStoreMultipleSchema.safeParse({ memoryList });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_store_multiple',
+                validationError: error.message,
+            },
+            'Multiple memory store validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -129,6 +191,18 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
         // Batch upsert all memories
         await Promise.all(memoryEntries.map(entry => upsertMemory(db, entry)));
 
+        const duration = Date.now() - startTime;
+        
+        logger.database(
+            {
+                operation: 'insert',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: memoryEntries.length,
+            },
+            `Successfully stored ${memoryEntries.length} memories`
+        );
+
         return { 
             success: true, 
             count: memoryEntries.length, 
@@ -140,8 +214,25 @@ export const memoryStoreMultipleFunction = async (memoryList: { key: string, val
 }
 
 export const memoryRetrieveFunction = async (embeddingQuery: string) => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_retrieve',
+            queryLength: embeddingQuery.length,
+        },
+        'Starting memory retrieval with semantic search'
+    );
+    
     const { success, error } = memoryRetrieveSchema.safeParse({ embeddingQuery });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_retrieve',
+                validationError: error.message,
+            },
+            'Memory retrieve validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -161,6 +252,18 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
             LIMIT 5
         `);
 
+        const duration = Date.now() - startTime;
+        
+        logger.database(
+            {
+                operation: 'select',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: result.length,
+            },
+            `Memory retrieval completed: found ${result.length} results`
+        );
+
         return result.length > 0 ? formatMemoryResults(result) : null;
     } catch (error) {
         return handleError(error, 'retrieving memory');
@@ -168,8 +271,28 @@ export const memoryRetrieveFunction = async (embeddingQuery: string) => {
 }
 
 export const memoryUpdateFunction = async (key: string, value: string, tags: string[]): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_update',
+            key,
+            tagsCount: tags.length,
+            valueLength: value.length,
+        },
+        `Starting memory update for key: ${key}`
+    );
+    
     const { success, error } = memoryUpdateSchema.safeParse({ key, value, tags });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_update',
+                key,
+                validationError: error.message,
+            },
+            'Memory update validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -188,6 +311,18 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
             embedding,
         });
 
+        const duration = Date.now() - startTime;
+        
+        logger.database(
+            {
+                operation: 'update',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: 1,
+            },
+            `Memory updated successfully: ${key}`
+        );
+
         return { success: true, message: 'Memory updated successfully' };
     } catch (error) {
         return handleError(error, 'updating memory');
@@ -195,8 +330,26 @@ export const memoryUpdateFunction = async (key: string, value: string, tags: str
 }
 
 export const memorySemanticSearchFunction = async (embeddingQuery: string, limit: number = 5): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_semantic_search',
+            queryLength: embeddingQuery.length,
+            limit,
+        },
+        'Starting semantic search of memory'
+    );
+    
     const { success, error } = memorySemanticSearchSchema.safeParse({ embeddingQuery, limit });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_semantic_search',
+                validationError: error.message,
+            },
+            'Memory semantic search validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -216,7 +369,19 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
             LIMIT ${limit}
         `);
         
+        const duration = Date.now() - startTime;
         const results = formatMemoryResults(result);
+        
+        logger.database(
+            {
+                operation: 'select',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: results.length,
+            },
+            `Semantic search completed: found ${results.length} results`
+        );
+        
         return { 
             success: true, 
             results, 
@@ -229,8 +394,27 @@ export const memorySemanticSearchFunction = async (embeddingQuery: string, limit
 }
 
 export const memorySearchByTagsFunction = async (tags: string[], limit: number = 10): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    
+    logger.debug(
+        {
+            operation: 'memory_search_by_tags',
+            tags,
+            tagsCount: tags.length,
+            limit,
+        },
+        `Starting memory search by tags: ${tags.join(', ')}`
+    );
+    
     const { success, error } = memorySearchByTagsSchema.safeParse({ tags, limit });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_search_by_tags',
+                validationError: error.message,
+            },
+            'Memory search by tags validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -249,7 +433,19 @@ export const memorySearchByTagsFunction = async (tags: string[], limit: number =
             LIMIT ${limit}
         `);
 
+        const duration = Date.now() - startTime;
         const results = formatMemoryResults(result);
+        
+        logger.database(
+            {
+                operation: 'select',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: results.length,
+            },
+            `Tag search completed: found ${results.length} memories with tags: ${tags.join(', ')}`
+        );
+        
         return { 
             success: true, 
             results, 
@@ -262,8 +458,29 @@ export const memorySearchByTagsFunction = async (tags: string[], limit: number =
 }
 
 export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: boolean = false, limit: number = 10): Promise<MemoryResult> => {
+    const startTime = Date.now();
+    const matchType = exactMatch ? 'exact' : 'partial';
+    
+    logger.debug(
+        {
+            operation: 'memory_search_by_key',
+            keyPattern,
+            exactMatch,
+            matchType,
+            limit,
+        },
+        `Starting memory search by key: ${keyPattern} (${matchType} match)`
+    );
+    
     const { success, error } = memorySearchByKeySchema.safeParse({ keyPattern, exactMatch, limit });
     if (!success) {
+        logger.warn(
+            {
+                operation: 'memory_search_by_key',
+                validationError: error.message,
+            },
+            'Memory search by key validation failed'
+        );
         return { success: false, error: error.message };
     }
 
@@ -286,8 +503,18 @@ export const memorySearchByKeyFunction = async (keyPattern: string, exactMatch: 
                 LIMIT ${limit}
             `);
 
+        const duration = Date.now() - startTime;
         const results = formatMemoryResults(result);
-        const matchType = exactMatch ? 'exact' : 'partial';
+        
+        logger.database(
+            {
+                operation: 'select',
+                table: 'memory',
+                queryTime: duration,
+                rowsAffected: results.length,
+            },
+            `Key search completed: found ${results.length} memories with ${matchType} match for "${keyPattern}"`
+        );
         
         return { 
             success: true, 

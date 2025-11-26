@@ -2,6 +2,7 @@ import { streamText, UIMessage, convertToModelMessages, stepCountIs, createIdGen
 import { openai } from '@ai-sdk/openai';
 import { memoryTools } from '@/lib/ai/tools/memory/tools';
 import { saveConversation } from '@/lib/database/conversations';
+import logger from '@/lib/logger';
 // Allow streaming responses up to 30 seconds
 export const maxDuration = 50;
 
@@ -19,6 +20,7 @@ If you think you could ask a question to the user to learn more about them, do i
 `;
 
 export async function POST(req: Request) {
+    const startTime = Date.now();
 
     try {
         const {
@@ -35,6 +37,33 @@ export async function POST(req: Request) {
             conversationId: string;
         } = await req.json();
 
+        logger.request(
+            {
+                method: 'POST',
+                url: '/api/chat',
+                conversationId,
+                statusCode: 200,
+            },
+            'Chat request started'
+        );
+
+        logger.ai(
+            {
+                model: 'gpt-5',
+                conversationId,
+            },
+            'Initializing AI conversation'
+        );
+        
+        logger.debug(
+            {
+                messageCount: messages.length,
+                webSearchEnabled: webSearch,
+                memoryEnabled: memory,
+            },
+            'AI conversation settings'
+        );
+
         const result = await openaiConversation(messages, webSearch, memory);
 
         const originalMessages = messages;
@@ -47,11 +76,51 @@ export async function POST(req: Request) {
                     size: 21,
                 }),
                 async onFinish({messages}) {
-                    await saveConversation(conversationId, originalMessages.concat(messages));
+                    try {
+                        const duration = Date.now() - startTime;
+                        
+                        await saveConversation(conversationId, originalMessages.concat(messages));
+                        
+                        logger.ai(
+                            {
+                                model: 'gpt-5',
+                                conversationId,
+                                duration,
+                            },
+                            'AI conversation completed successfully'
+                        );
+                        
+                        logger.debug(
+                            {
+                                messagesGenerated: messages.length,
+                            },
+                            `Generated ${messages.length} AI messages`
+                        );
+                    } catch (error) {
+                        logger.error(
+                            error instanceof Error ? error : new Error(String(error)),
+                            'Failed to save conversation after AI completion'
+                        );
+                    }
                 }
             }
         );
     } catch (error) {
+        const duration = Date.now() - startTime;
+        
+        logger.error(
+            error instanceof Error ? error : new Error(String(error)),
+            'Chat request failed'
+        );
+        
+        logger.performance(
+            {
+                operation: 'chat_completion_error',
+                duration,
+            },
+            'Chat request ended with error'
+        );
+        
         throw error;
     }
 }
