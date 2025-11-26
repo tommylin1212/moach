@@ -27,6 +27,7 @@ import SourceDisplay from '@/components/conversation-elements/source';
 import { generateConversationId } from '@/lib/utils';
 import ConversationSidebar from '@/components/conversation-elements/conversation-sidebar';
 import MessageDisplay from '@/components/conversation-elements/messages';
+import logger, { setCorrelationContext } from '@/lib/logger';
 
 const models = [
   {
@@ -66,22 +67,73 @@ export default function Page() {
   } = useConversation({ initialConversationId: conversationId || undefined });
   
   useEffect(() => {
+    logger.info({ component: 'Page' }, 'Component mounted');
+    
     const urlConversationId = new URLSearchParams(window.location.search).get('conversationId');
     if (urlConversationId && urlConversationId !== null) {
+      logger.info(
+        { 
+          component: 'Page',
+          conversationId: urlConversationId,
+          action: 'load_existing_conversation'
+        }, 
+        'Loading existing conversation from URL'
+      );
       setConversationId(urlConversationId);
+      setCorrelationContext({ conversationId: urlConversationId });
       loadConversationById(urlConversationId);
     } else {
       const newConversationId = generateConversationId();
+      logger.info(
+        { 
+          component: 'Page',
+          conversationId: newConversationId,
+          action: 'create_new_conversation'
+        }, 
+        'Creating new conversation'
+      );
       setConversationId(newConversationId);
+      setCorrelationContext({ conversationId: newConversationId });
       window.history.pushState({}, '', `?conversationId=${newConversationId}`);
     }
+
+    return () => {
+      logger.debug({ component: 'Page' }, 'Component unmounting');
+    };
   },[loadConversationById]);
+  
+  // Update correlation context when conversation changes
+  useEffect(() => {
+    if (currentConversationId) {
+      setCorrelationContext({ conversationId: currentConversationId });
+    }
+  }, [currentConversationId]);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (input.trim()) {
+    
+    const trimmedInput = input.trim();
+    if (!trimmedInput) {
+      logger.debug({ component: 'Page', action: 'submit_empty' }, 'Submission ignored - empty input');
+      return;
+    }
+
+    logger.info(
+      { 
+        component: 'Page',
+        action: 'submit_message',
+        conversationId: currentConversationId,
+        model,
+        webSearch,
+        memory,
+        inputLength: trimmedInput.length
+      }, 
+      'Submitting user message'
+    );
+
+    try {
       sendMessage(
-        { text: input },
+        { text: trimmedInput },
         {
           body: {
             model: model,
@@ -92,6 +144,20 @@ export default function Page() {
         },
       );
       setInput('');
+      
+      logger.debug(
+        { 
+          component: 'Page',
+          action: 'submit_success',
+          conversationId: currentConversationId
+        }, 
+        'Message sent successfully'
+      );
+    } catch (error) {
+      logger.error(
+        error instanceof Error ? error : new Error(String(error)),
+        'Failed to send message'
+      );
     }
   };
   return (
@@ -138,20 +204,51 @@ export default function Page() {
             <PromptInputTools>
               <PromptInputButton
                 variant={webSearch ? 'default' : 'ghost'}
-                onClick={() => setWebSearch(!webSearch)}
+                onClick={() => {
+                  const newState = !webSearch;
+                  logger.debug(
+                    { 
+                      component: 'Page',
+                      action: 'toggle_web_search',
+                      enabled: newState
+                    }, 
+                    `Web search ${newState ? 'enabled' : 'disabled'}`
+                  );
+                  setWebSearch(newState);
+                }}
               >
                 <GlobeIcon size={16} />
                 <span>Search</span>
               </PromptInputButton>
               <PromptInputButton
                 variant={memory ? 'default' : 'ghost'}
-                onClick={() => setMemory(!memory)}
+                onClick={() => {
+                  const newState = !memory;
+                  logger.debug(
+                    { 
+                      component: 'Page',
+                      action: 'toggle_memory',
+                      enabled: newState
+                    }, 
+                    `Memory ${newState ? 'enabled' : 'disabled'}`
+                  );
+                  setMemory(newState);
+                }}
               >
                 <BrainIcon size={16} />
                 <span>Enable Memory</span>
               </PromptInputButton>
               <PromptInputModelSelect
                 onValueChange={(value) => {
+                  logger.info(
+                    { 
+                      component: 'Page',
+                      action: 'change_model',
+                      previousModel: model,
+                      newModel: value
+                    }, 
+                    `Model changed from ${model} to ${value}`
+                  );
                   setModel(value);
                 }}
                 value={model}

@@ -3,8 +3,21 @@ import { Message, MessageContent } from "../ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "../ai-elements/reasoning";
 import { Response } from '@/components/ai-elements/response';
 import { Tool } from "../ai-elements/tool";
+import logger from '@/lib/logger';
+import { useEffect } from 'react';
 
 export default function MessageDisplay({ message }: { message: UIMessage }) {
+    useEffect(() => {
+        logger.debug(
+            { 
+                component: 'MessageDisplay',
+                messageId: message.id,
+                messageRole: message.role,
+                partsCount: message.parts?.length || 0
+            }, 
+            'MessageDisplay rendered'
+        );
+    }, [message.id, message.role, message.parts?.length]);
 
     return (
         <Message from={message.role} key={message.id}>

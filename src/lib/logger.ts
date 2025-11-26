@@ -47,4 +47,5 @@ export {
   getRequestId,
   getUserId,
   getConversationId,
+  setCorrelationContext,
 } from './logging';

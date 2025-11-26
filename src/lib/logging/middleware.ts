@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pinoHttp from 'pino-http';
 import type { TypedLogger, RequestLogContext } from './types';
 import { 
   createCorrelationContext, 
@@ -7,6 +6,20 @@ import {
   extractCorrelationFromHeaders,
   createCorrelationHeaders 
 } from './correlation';
+
+/**
+ * Dynamically import pino-http only on the server
+ * This prevents bundling Node.js-only code in the browser
+ */
+let pinoHttp: any = null;
+if (typeof window === 'undefined') {
+  try {
+    // Dynamic import for server-side only
+    pinoHttp = require('pino-http');
+  } catch {
+    // pino-http not available, middleware will be no-op
+  }
+}
 
 /**
  * Configuration for request logging middleware
@@ -42,11 +55,17 @@ const defaultConfig: Partial<RequestLoggingConfig> = {
 
 /**
  * Create Pino HTTP middleware for Express-like frameworks
+ * Note: This only works on the server, returns a no-op in the browser
  */
 export function createPinoHttpMiddleware(logger: TypedLogger) {
+  if (!pinoHttp) {
+    // Return a no-op middleware for browser/when pino-http unavailable
+    return (req: any, res: any, next: any) => next?.();
+  }
+  
   return pinoHttp({
     logger: logger as any,
-    customLogLevel: (req, res, err) => {
+    customLogLevel: (req: any, res: any, err: any) => {
       if (res.statusCode >= 400 && res.statusCode < 500) {
         return 'warn';
       } else if (res.statusCode >= 500 || err) {
@@ -56,10 +75,10 @@ export function createPinoHttpMiddleware(logger: TypedLogger) {
       }
       return 'info';
     },
-    customSuccessMessage: (req, res) => {
+    customSuccessMessage: (req: any, res: any) => {
       return `${req.method} ${req.url} - ${res.statusCode}`;
     },
-    customErrorMessage: (req, res, err) => {
+    customErrorMessage: (req: any, res: any, err: any) => {
       return `${req.method} ${req.url} - ${res.statusCode} - ${err.message}`;
     },
     customAttributeKeys: {

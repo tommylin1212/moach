@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Conversation } from "@/lib/database/schema"
+import logger from '@/lib/logger'
 
 export interface ConversationSidebarProps {
   conversations: Conversation[]
@@ -33,21 +34,76 @@ export const ConversationSidebar = ({
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editTitle, setEditTitle] = React.useState('')
 
+  React.useEffect(() => {
+    logger.debug(
+      { 
+        component: 'ConversationSidebar',
+        conversationCount: conversations.length,
+        currentConversationId,
+        isLoading
+      }, 
+      'ConversationSidebar rendered'
+    );
+  }, [conversations.length, currentConversationId, isLoading]);
+
 
   const handleStartEdit = (conversation: Conversation) => {
+    logger.debug(
+      { 
+        component: 'ConversationSidebar',
+        action: 'start_edit',
+        conversationId: conversation.id,
+        currentTitle: conversation.title
+      }, 
+      'Started editing conversation title'
+    );
     setEditingId(conversation.id)
     setEditTitle(conversation.title)
   }
 
   const handleSaveEdit = async () => {
     if (editingId && editTitle.trim()) {
-      await onUpdateTitle(editingId, editTitle.trim())
-      setEditingId(null)
-      setEditTitle('')
+      logger.info(
+        { 
+          component: 'ConversationSidebar',
+          action: 'save_title',
+          conversationId: editingId,
+          newTitle: editTitle.trim()
+        }, 
+        'Saving conversation title'
+      );
+      
+      try {
+        await onUpdateTitle(editingId, editTitle.trim())
+        setEditingId(null)
+        setEditTitle('')
+        
+        logger.info(
+          { 
+            component: 'ConversationSidebar',
+            action: 'save_title_success',
+            conversationId: editingId
+          }, 
+          'Title updated successfully'
+        );
+      } catch (error) {
+        logger.error(
+          error instanceof Error ? error : new Error(String(error)),
+          'Failed to update conversation title'
+        );
+      }
     }
   }
 
   const handleCancelEdit = () => {
+    logger.debug(
+      { 
+        component: 'ConversationSidebar',
+        action: 'cancel_edit',
+        conversationId: editingId
+      }, 
+      'Cancelled editing conversation title'
+    );
     setEditingId(null)
     setEditTitle('')
   }
@@ -63,7 +119,16 @@ export const ConversationSidebar = ({
           </div>
           
           <Button
-            onClick={onNewConversation}
+            onClick={() => {
+              logger.info(
+                { 
+                  component: 'ConversationSidebar',
+                  action: 'new_conversation'
+                }, 
+                'Creating new conversation'
+              );
+              onNewConversation();
+            }}
             className="w-full"
             size="sm"
           >
@@ -98,6 +163,15 @@ export const ConversationSidebar = ({
                     )}
                     onClick={() => {
                       if (editingId !== conversation.id) {
+                        logger.info(
+                          { 
+                            component: 'ConversationSidebar',
+                            action: 'load_conversation',
+                            conversationId: conversation.id,
+                            conversationTitle: conversation.title
+                          }, 
+                          'Loading conversation'
+                        );
                         onLoadConversation(conversation.id)
                       }
                     }}
@@ -157,6 +231,15 @@ export const ConversationSidebar = ({
                             <Button
                               onClick={(e) => {
                                 e.stopPropagation()
+                                logger.warn(
+                                  { 
+                                    component: 'ConversationSidebar',
+                                    action: 'delete_conversation',
+                                    conversationId: conversation.id,
+                                    conversationTitle: conversation.title
+                                  }, 
+                                  'Deleting conversation'
+                                );
                                 onDeleteConversation(conversation.id)
                               }}
                               size="sm"

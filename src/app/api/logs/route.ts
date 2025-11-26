@@ -3,11 +3,12 @@ import { createBackendLogger } from '@/lib/logging/backend-logger';
 import type { LogEntry } from '@/lib/logging/types';
 
 // Create a dedicated logger for handling frontend logs
+// Note: prettyPrint is disabled to avoid worker thread issues in API routes
 const frontendLogHandler = createBackendLogger({
   level: 'trace', // Accept all log levels from frontend
   environment: 'nodejs',
   serviceName: 'moach-frontend-logs',
-  prettyPrint: process.env.NODE_ENV === 'development',
+  prettyPrint: false, // Disable to prevent worker thread errors in Next.js
 });
 
 /**
@@ -54,35 +55,41 @@ export async function POST(request: NextRequest) {
  * Process a single frontend log entry
  */
 function logFrontendEntry(entry: LogEntry): void {
-  const logData = {
-    ...entry.context,
-    source: entry.source,
-    service: entry.service,
-    originalTimestamp: entry.timestamp,
-  };
+  try {
+    const logData = {
+      ...entry.context,
+      source: entry.source,
+      service: entry.service,
+      originalTimestamp: entry.timestamp,
+    };
 
-  // Map frontend log levels to backend logger methods
-  switch (entry.level) {
-    case 'trace':
-      frontendLogHandler.trace(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    case 'debug':
-      frontendLogHandler.debug(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    case 'info':
-      frontendLogHandler.info(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    case 'warn':
-      frontendLogHandler.warn(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    case 'error':
-      frontendLogHandler.error(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    case 'fatal':
-      frontendLogHandler.fatal(logData, `[FRONTEND] ${entry.message}`);
-      break;
-    default:
-      frontendLogHandler.info(logData, `[FRONTEND] ${entry.message}`);
+    // Map frontend log levels to backend logger methods
+    switch (entry.level) {
+      case 'trace':
+        frontendLogHandler.trace(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      case 'debug':
+        frontendLogHandler.debug(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      case 'info':
+        frontendLogHandler.info(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      case 'warn':
+        frontendLogHandler.warn(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      case 'error':
+        frontendLogHandler.error(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      case 'fatal':
+        frontendLogHandler.fatal(logData, `[FRONTEND] ${entry.message}`);
+        break;
+      default:
+        frontendLogHandler.info(logData, `[FRONTEND] ${entry.message}`);
+    }
+  } catch (error) {
+    // Fallback to console if logger fails
+    console.error('[LOG HANDLER ERROR]', error);
+    console.log('[FRONTEND LOG]', entry.level, entry.message, entry.context);
   }
 }
 

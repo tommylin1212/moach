@@ -1,11 +1,125 @@
-import { AsyncLocalStorage } from 'async_hooks';
 import { nanoid } from 'nanoid';
 import type { CorrelationContext } from './types';
 
 /**
- * AsyncLocalStorage instance for request correlation tracking
+ * Simple storage interface for correlation context
  */
-const correlationStorage = new AsyncLocalStorage<CorrelationContext>();
+interface CorrelationStorage {
+  getStore(): CorrelationContext | undefined;
+  run<T>(context: CorrelationContext, fn: () => T): T;
+}
+
+/**
+ * Browser-compatible correlation storage using sessionStorage for persistence
+ * Falls back to in-memory storage if sessionStorage is not available
+ */
+class BrowserCorrelationStorage implements CorrelationStorage {
+  private store: CorrelationContext | undefined;
+  private readonly storageKey = 'moach_correlation_context';
+
+  private loadFromSessionStorage(): CorrelationContext | undefined {
+    if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') {
+      return undefined;
+    }
+
+    try {
+      const stored = sessionStorage.getItem(this.storageKey);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {
+      // Ignore errors reading from sessionStorage
+    }
+    return undefined;
+  }
+
+  private saveToSessionStorage(context: CorrelationContext | undefined): void {
+    if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') {
+      return;
+    }
+
+    try {
+      if (context) {
+        sessionStorage.setItem(this.storageKey, JSON.stringify(context));
+      } else {
+        sessionStorage.removeItem(this.storageKey);
+      }
+    } catch {
+      // Ignore errors writing to sessionStorage
+    }
+  }
+
+  getStore(): CorrelationContext | undefined {
+    // Try in-memory first, then sessionStorage
+    if (this.store) {
+      return this.store;
+    }
+    return this.loadFromSessionStorage();
+  }
+
+  run<T>(context: CorrelationContext, fn: () => T): T {
+    const previousStore = this.store;
+    this.store = context;
+    this.saveToSessionStorage(context);
+    
+    try {
+      return fn();
+    } finally {
+      this.store = previousStore;
+      this.saveToSessionStorage(previousStore);
+    }
+  }
+}
+
+/**
+ * Node.js correlation storage using AsyncLocalStorage
+ */
+class NodeCorrelationStorage implements CorrelationStorage {
+  private asyncLocalStorage: any;
+
+  constructor() {
+    // Dynamic import for Node.js only
+    if (typeof window === 'undefined') {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { AsyncLocalStorage } = require('async_hooks');
+        this.asyncLocalStorage = new AsyncLocalStorage();
+      } catch {
+        // Fallback if async_hooks is not available
+        this.asyncLocalStorage = null;
+      }
+    }
+  }
+
+  getStore(): CorrelationContext | undefined {
+    return this.asyncLocalStorage?.getStore();
+  }
+
+  run<T>(context: CorrelationContext, fn: () => T): T {
+    if (this.asyncLocalStorage) {
+      return this.asyncLocalStorage.run(context, fn);
+    }
+    return fn();
+  }
+}
+
+/**
+ * Detect environment and create appropriate storage
+ */
+function createCorrelationStorage(): CorrelationStorage {
+  if (typeof window === 'undefined') {
+    // Node.js environment
+    return new NodeCorrelationStorage();
+  } else {
+    // Browser environment
+    return new BrowserCorrelationStorage();
+  }
+}
+
+/**
+ * Correlation storage instance (automatically adapts to environment)
+ */
+const correlationStorage = createCorrelationStorage();
 
 /**
  * Generate a new correlation ID
@@ -146,4 +260,19 @@ export function createCorrelationHeaders(): Record<string, string> {
   }
 
   return headers;
+}
+
+/**
+ * Set correlation context in the browser (persists to sessionStorage)
+ * Useful for tracking conversation IDs, user IDs across the frontend
+ */
+export function setCorrelationContext(context: Partial<CorrelationContext>): void {
+  const current = getCorrelationContext();
+  const newContext = createCorrelationContext({
+    ...current,
+    ...context,
+  });
+  
+  // Use a no-op function to just set the context
+  withCorrelation(newContext, () => {});
 }

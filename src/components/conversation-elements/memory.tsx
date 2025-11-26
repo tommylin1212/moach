@@ -11,6 +11,7 @@ import { UIMessage, UIDataTypes, UIMessagePart, UITools, ToolUIPart } from "ai"
 import z from "zod"
 import { memoryStoreMultipleSchema, memoryStoreSchema, memoryUpdateSchema } from "@/lib/ai/tools/memory/schemas"
 import { Memory } from "@/lib/database/schema"
+import logger from '@/lib/logger'
 
 export interface MemoryItem {
   id?: string | number
@@ -35,7 +36,8 @@ export function extractMemoryFromMessage(message: UIMessage): MemoryItem[] {
 
   const memoryItems: MemoryItem[] = [];
 
-  message.parts.forEach((part: AnyUIMessagePart) => {
+  try {
+    message.parts.forEach((part: AnyUIMessagePart) => {
     // Check for memory tool calls
     if (part.type?.startsWith('tool-memory_')) {
       const toolPart = part as ToolUIPart;
@@ -99,11 +101,32 @@ export function extractMemoryFromMessage(message: UIMessage): MemoryItem[] {
             }
           }
         } catch (error) {
-          console.error('Error parsing memory data:', error);
+          logger.error(
+            error instanceof Error ? error : new Error(String(error)),
+            'Error parsing memory data from tool part'
+          );
         }
       }
     }
   });
+  } catch (error) {
+    logger.error(
+      error instanceof Error ? error : new Error(String(error)),
+      'Error extracting memory from message'
+    );
+  }
+
+  if (memoryItems.length > 0) {
+    logger.debug(
+      { 
+        component: 'MemoryDisplay',
+        messageId: message.id,
+        memoryCount: memoryItems.length,
+        operations: memoryItems.map(m => m.operation)
+      }, 
+      `Extracted ${memoryItems.length} memory items from message`
+    );
+  }
 
   return memoryItems;
 };
@@ -112,6 +135,20 @@ export function extractMemoryFromMessage(message: UIMessage): MemoryItem[] {
 export const MemoryDisplay = ({ message, className }: MemoryDisplayProps) => {
   const [isOpen, setIsOpen] = React.useState(false)
   const memories = extractMemoryFromMessage(message)
+
+  React.useEffect(() => {
+    if (memories.length > 0) {
+      logger.debug(
+        { 
+          component: 'MemoryDisplay',
+          messageId: message.id,
+          memoryCount: memories.length,
+          isOpen
+        }, 
+        'MemoryDisplay rendered with memories'
+      );
+    }
+  }, [memories.length, message.id, isOpen]);
 
   if (!memories || memories.length === 0) return null
 
@@ -168,6 +205,18 @@ export const MemoryDisplay = ({ message, className }: MemoryDisplayProps) => {
           <Button
             variant="ghost"
             className="w-full justify-between h-auto p-3 hover:bg-accent/50 transition-all duration-200 group border border-transparent hover:border-border/50 rounded-lg"
+            onClick={() => {
+              logger.debug(
+                { 
+                  component: 'MemoryDisplay',
+                  action: 'toggle_memory_display',
+                  messageId: message.id,
+                  newState: !isOpen,
+                  memoryCount: memories.length
+                }, 
+                `Memory display ${!isOpen ? 'opened' : 'closed'}`
+              );
+            }}
           >
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <div className="relative">
@@ -361,3 +410,4 @@ export const MemoryDisplay = ({ message, className }: MemoryDisplayProps) => {
 }
 
 export default MemoryDisplay
+

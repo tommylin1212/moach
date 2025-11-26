@@ -76,6 +76,7 @@ export {
   getCorrelationData,
   extractCorrelationFromHeaders,
   createCorrelationHeaders,
+  setCorrelationContext,
 } from './correlation';
 
 // Middleware and utilities
